@@ -1,14 +1,20 @@
 # AIR
 
-**AIR (Agent Isolation Runtime)** is an open-source runtime for executing untrusted AI-generated code inside isolated lightweight VMs.
+[中文](#中文简介) | [English](#english)
 
-The project is built around a simple premise:
+**AIR (Agent Isolation Runtime)** is an open-source runtime for executing untrusted AI-generated code inside isolated lightweight VMs.
 
 > AI-generated code should not run in the host environment by default.
 
-AIR aims to provide a safer execution boundary for coding agents, sandboxed tools, and automated development workflows by using VM-based isolation instead of shared-kernel containers.
+AIR is designed for coding agents, sandboxed tools, and automated development workflows that need a stronger execution boundary than shared-kernel containers.
 
-## Why AIR
+## English
+
+### What AIR Is
+
+AIR provides a VM-based execution boundary for untrusted code. The project is focused on building a safe, disposable, reproducible runtime for AI agents that generate and execute code autonomously.
+
+### Why AIR
 
 Modern AI agents do more than generate code. They write, execute, iterate, and return results. That changes the infrastructure requirement:
 
@@ -17,33 +23,27 @@ Modern AI agents do more than generate code. They write, execute, iterate, and r
 - Resource access should be controlled
 - State should be reproducible when needed
 
-AIR is designed for that model.
-
-## Core Goals
+### Core Goals
 
 - Run untrusted code inside an isolated VM
-- Support disposable one-shot execution and stateful sessions
+- Support both one-shot tasks and stateful sessions
 - Disable network access by default
 - Enforce CPU, memory, and timeout limits
 - Evolve toward `overlay + snapshot + fast restore`
 
-## Product Direction
+### Product Direction
 
-AIR is planned around two execution modes:
-
-### 1. One-shot execution
+#### 1. One-shot execution
 
 ```bash
 air run hello.py
 ```
 
-Flow:
-
 ```text
 Create VM -> Load environment -> Execute -> Return output -> Destroy VM
 ```
 
-### 2. Stateful session execution
+#### 2. Stateful session execution
 
 ```bash
 air session create
@@ -52,15 +52,11 @@ air session exec <id> "cat a.txt"
 air session delete <id>
 ```
 
-Flow:
-
 ```text
 Create VM -> Keep state -> Execute multiple commands -> Destroy session
 ```
 
-## Architecture Overview
-
-AIR follows a control-plane / execution-plane design:
+### Architecture Overview
 
 ```text
 CLI / HTTP API
@@ -77,9 +73,9 @@ Orchestrator
 Hypervisor + Guest Agent + Rootfs
 ```
 
-## Roadmap
+### Roadmap
 
-### Phase 1: MVP
+#### Phase 1: MVP
 - `air session create`
 - `air session exec`
 - `air session delete`
@@ -87,35 +83,21 @@ Hypervisor + Guest Agent + Rootfs
 - File-based Host/Guest communication
 - Single-node runtime
 
-### Phase 2: Engineering baseline
+#### Phase 2: Engineering baseline
 - Guest agent
 - `virtio-serial` or `vsock`
 - HTTP API
 - `base image + overlay`
 - Timeout, GC, logging
 
-### Phase 3: Performance and platform
+#### Phase 3: Performance and platform
 - Snapshot / restore
 - Warm VM pool
 - Streaming output
 - Network whitelist mode
 - Metrics and observability
 
-## Open Source Direction
-
-AIR is intended to be built in the open.
-
-We want to grow a developer community around:
-
-- VM-based AI sandboxing
-- Agent runtime design
-- Guest/Host communication
-- Snapshot and fast restore
-- Security-first execution infrastructure
-
-Contributions are welcome across architecture, virtualization, Go services, guest agent design, and documentation.
-
-## Current Documentation
+### Documentation
 
 - [Project Plan](docs/project-plan.md)
 - [Product Requirement Document](docs/prd.md)
@@ -123,39 +105,133 @@ Contributions are welcome across architecture, virtualization, Go services, gues
 - [API Design](docs/api-design.md)
 - [Data Model](docs/data-model.md)
 - [Repository Guidelines](AGENTS.md)
+- [Roadmap](ROADMAP.md)
+- [Contributing Guide](CONTRIBUTING.md)
 
-## Suggested MVP Structure
+### Community
 
-```text
-cmd/air/
-internal/session/
-internal/vm/
-internal/store/
-data/
-docs/
+We want AIR to be built in the open. Contributions are welcome across:
+
+- VM-based AI sandboxing
+- Agent runtime design
+- Guest/Host communication
+- Snapshot and fast restore
+- Go control plane services
+- Documentation and developer experience
+
+## 中文简介
+
+### AIR 是什么
+
+AIR（Agent Isolation Runtime）是一个面向 AI Agent 的开源隔离运行时，用轻量虚拟机而不是共享内核容器来执行不可信代码。
+
+它解决的不是“怎么运行代码”，而是“怎么安全地运行 AI 生成的代码”。
+
+### 为什么要做 AIR
+
+AI Agent 已经不只是生成代码，而是开始自己执行代码、修改文件、跑测试、返回结果。这意味着底层基础设施必须变化：
+
+- 执行代码默认不可信
+- 执行环境需要可销毁
+- 资源访问需要被限制
+- 执行状态需要可复现
+
+### 核心目标
+
+- 在独立 VM 中执行不可信代码
+- 同时支持一次性执行和有状态 Session
+- 默认关闭网络
+- 支持 CPU、内存、超时限制
+- 后续演进到 `overlay + snapshot + fast restore`
+
+### 产品方向
+
+#### 1. 一次性执行
+
+```bash
+air run hello.py
 ```
 
-## Who This Is For
+```text
+创建 VM -> 加载环境 -> 执行 -> 返回结果 -> 销毁 VM
+```
 
-AIR is relevant if you are building:
+#### 2. 有状态 Session
 
-- AI coding agents
-- secure execution sandboxes
-- cloud IDE backends
-- automated code evaluation systems
-- infrastructure for untrusted task execution
+```bash
+air session create
+air session exec <id> "echo hello > a.txt"
+air session exec <id> "cat a.txt"
+air session delete <id>
+```
 
-## Community
+```text
+创建 VM -> 保留状态 -> 多次执行 -> 销毁 Session
+```
 
-If you are interested in building AIR, you can contribute by:
+### 技术架构概览
 
-- opening issues
-- proposing architecture improvements
-- implementing the MVP runtime
-- improving isolation and communication design
-- helping shape the public roadmap
+```text
+CLI / HTTP API
+      |
+      v
+Orchestrator
+      |
+      +-- Session Manager
+      +-- VM Manager
+      +-- Isolation Controller
+      +-- Snapshot Engine
+      |
+      v
+Hypervisor + Guest Agent + Rootfs
+```
+
+### 路线图
+
+#### 第一阶段：MVP
+- `air session create`
+- `air session exec`
+- `air session delete`
+- 本地 JSON 状态存储
+- Host/Guest 文件通信
+- 单机运行时
+
+#### 第二阶段：工程化基础
+- Guest Agent
+- `virtio-serial` 或 `vsock`
+- HTTP API
+- `base image + overlay`
+- timeout、GC、日志
+
+#### 第三阶段：性能与平台能力
+- Snapshot / Restore
+- 预热 VM 池
+- 流式输出
+- 白名单网络模式
+- 指标与可观测性
+
+### 文档
+
+- [项目计划](docs/project-plan.md)
+- [产品说明书](docs/prd.md)
+- [技术架构](docs/technical-architecture.md)
+- [接口设计](docs/api-design.md)
+- [数据模型](docs/data-model.md)
+- [仓库协作指南](AGENTS.md)
+- [项目路线图](ROADMAP.md)
+- [贡献指南](CONTRIBUTING.md)
+
+### 社区建设
+
+AIR 的目标是面向社区持续建设。欢迎以下方向的开发者加入：
+
+- 虚拟化与 VM 管理
+- Guest / Host 通信
+- Go 控制面与 API
+- Snapshot 与快速恢复
+- AI 安全执行基础设施
+- 文档、示例和开发者体验
 
 ## Status
 
-AIR is at the early design and bootstrap stage. The current focus is to turn the architecture into a working open-source MVP.
-
+AIR is in the early design and bootstrap stage. The current focus is turning the architecture into a working open-source MVP.
