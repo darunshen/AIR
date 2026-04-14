@@ -26,6 +26,7 @@
   - `air session console <id>`
   - `air session console <id> --follow`
   - runtime inspect 已返回 provider、pid、console、socket、vsock、config 等路径
+  - `list` / `inspect` 会按 runtime 实况刷新 session 状态
   - 旧 session 缺失 `provider` 时可自动补全
 
 ## P0: Guest Agent 与通信

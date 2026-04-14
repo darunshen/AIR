@@ -1,6 +1,7 @@
 package session
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -150,5 +151,46 @@ func TestSessionListBackfillsMissingProvider(t *testing.T) {
 	}
 	if inspect.Session.Provider != "local" {
 		t.Fatalf("expected inspect provider backfilled to local, got %q", inspect.Session.Provider)
+	}
+}
+
+func TestSessionListRefreshesStoppedStatus(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	s, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if err := os.RemoveAll(filepath.Join(root, "runtime", "sessions", "local", s.ID)); err != nil {
+		t.Fatalf("remove runtime directory: %v", err)
+	}
+
+	items, err := manager.List()
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if items[0].Status != "stopped" {
+		t.Fatalf("expected stopped status after runtime removal, got %q", items[0].Status)
+	}
+
+	inspect, err := manager.Inspect(s.ID)
+	if err != nil {
+		t.Fatalf("inspect session: %v", err)
+	}
+	if inspect.Session.Status != "stopped" {
+		t.Fatalf("expected inspect to report stopped status, got %q", inspect.Session.Status)
+	}
+	if inspect.Runtime.Exists || inspect.Runtime.Running {
+		t.Fatalf("expected missing runtime, got exists=%v running=%v", inspect.Runtime.Exists, inspect.Runtime.Running)
 	}
 }

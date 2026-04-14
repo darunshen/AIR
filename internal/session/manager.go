@@ -86,13 +86,21 @@ func (m *Manager) Exec(sessionID, command string) (*ExecResult, error) {
 	if err := m.ensureProvider(s); err != nil {
 		return nil, err
 	}
-	if s.Status != "running" {
-		return nil, errors.New("session is not running")
-	}
 
 	runtime, err := m.runtimeForSession(s)
 	if err != nil {
 		return nil, err
+	}
+
+	info, err := runtime.Inspect(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.syncSessionState(s, info); err != nil {
+		return nil, err
+	}
+	if s.Status != "running" {
+		return nil, errors.New("session is not running")
 	}
 
 	result, err := runtime.Exec(sessionID, command, 30*time.Second)
@@ -142,6 +150,17 @@ func (m *Manager) List() ([]*model.Session, error) {
 		if err := m.ensureProvider(item); err != nil {
 			return nil, err
 		}
+		runtime, err := m.runtimeForSession(item)
+		if err != nil {
+			return nil, err
+		}
+		info, err := runtime.Inspect(item.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := m.syncSessionState(item, info); err != nil {
+			return nil, err
+		}
 	}
 	return items, nil
 }
@@ -167,6 +186,9 @@ func (m *Manager) Inspect(sessionID string) (*InspectResult, error) {
 
 	info, err := runtime.Inspect(sessionID)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.syncSessionState(s, info); err != nil {
 		return nil, err
 	}
 
@@ -217,4 +239,18 @@ func (m *Manager) ensureProvider(s *model.Session) error {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func (m *Manager) syncSessionState(s *model.Session, info *vm.InspectInfo) error {
+	next := "stopped"
+	if info != nil && info.Exists && info.Running {
+		next = "running"
+	}
+
+	if s.Status == next {
+		return nil
+	}
+
+	s.Status = next
+	return m.store.Save(s)
 }
