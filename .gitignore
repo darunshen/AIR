@@ -1,2 +1,5 @@
 .codex
 runtime/
+air
+*.test
+*.test.exe

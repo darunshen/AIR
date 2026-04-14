@@ -106,6 +106,8 @@ Hypervisor + Guest Agent + Rootfs
 - [Data Model](docs/data-model.md)
 - [Virtualization Selection](docs/virtualization-selection.md)
 - [VM Runtime Design](docs/vm-runtime-design.md)
+- [Firecracker Deployment Guide](docs/firecracker-deployment-guide.md)
+- [Operations Manual](docs/operations-manual.md)
 - [Repository Guidelines](AGENTS.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing Guide](CONTRIBUTING.md)
@@ -221,6 +223,8 @@ Hypervisor + Guest Agent + Rootfs
 - [数据模型](docs/data-model.md)
 - [虚拟化技术选型](docs/virtualization-selection.md)
 - [VM Runtime 设计](docs/vm-runtime-design.md)
+- [Firecracker 真机部署指南](docs/firecracker-deployment-guide.md)
+- [操作手册](docs/operations-manual.md)
 - [仓库协作指南](AGENTS.md)
 - [项目路线图](ROADMAP.md)
 - [贡献指南](CONTRIBUTING.md)
@@ -244,5 +248,27 @@ Current implementation note:
 
 - Phase 1 has started with a minimal Go CLI skeleton
 - `session create / exec / delete` is being built first
-- The current `vm` layer is a local runtime adapter used to validate the session flow
-- Real VM-backed isolation is the next step after the command path and state model are stable
+- The `vm` layer now supports a configurable provider with `local` as the default and `firecracker` as the experimental VM-backed path
+- Firecracker bootstrapping is wired through the host-side API flow, while guest `vsock` exec is still pending
+
+Runtime configuration:
+
+- `AIR_VM_RUNTIME`: choose `local` or `firecracker`
+- `AIR_FIRECRACKER_BIN`: Firecracker binary path, default `firecracker`
+- `AIR_FIRECRACKER_KERNEL`: kernel image path required by the `firecracker` provider
+- `AIR_FIRECRACKER_ROOTFS`: rootfs image path required by the `firecracker` provider
+- `AIR_KVM_DEVICE`: KVM device path, default `/dev/kvm`
+
+Firecracker runtime layout:
+
+- `runtime/sessions/firecracker/<session_id>/firecracker.sock`
+- `runtime/sessions/firecracker/<session_id>/firecracker.pid`
+- `runtime/sessions/firecracker/<session_id>/console.log`
+- `runtime/sessions/firecracker/<session_id>/metrics.log`
+- `runtime/sessions/firecracker/<session_id>/firecracker.vsock`
+- `runtime/sessions/firecracker/<session_id>/config/*.json`
+
+Real-environment lifecycle test:
+
+- `AIR_FIRECRACKER_INTEGRATION=1 go test ./internal/vm -run TestFirecrackerIntegrationLifecycle`
+- The test is skipped unless Linux, `/dev/kvm`, Firecracker, kernel, and rootfs are all available

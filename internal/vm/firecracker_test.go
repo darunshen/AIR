@@ -1,0 +1,284 @@
+package vm
+
+import (
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+)
+
+func TestFirecrackerStartStopWithFakeBinary(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	kernel := filepath.Join(root, "vmlinux.bin")
+	rootfs := filepath.Join(root, "rootfs.ext4")
+	kvm := filepath.Join(root, "kvm")
+	bin := filepath.Join(root, "fake-firecracker")
+
+	for _, path := range []string{kernel, rootfs, kvm} {
+		if err := os.WriteFile(path, []byte("test"), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", path, err)
+		}
+	}
+
+	script := `#!/bin/sh
+sock=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--api-sock" ]; then
+    sock="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+if [ -z "$sock" ]; then
+  exit 2
+fi
+touch "$sock"
+trap 'rm -f "$sock"; exit 0' TERM INT
+while true; do sleep 1; done
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake firecracker: %v", err)
+	}
+
+	rtAny, err := NewWithConfig(Config{
+		Root:              filepath.Join(root, "runtime"),
+		Provider:          "firecracker",
+		FirecrackerBinary: bin,
+		KernelImage:       kernel,
+		RootfsImage:       rootfs,
+		KVMDevice:         kvm,
+		VSockCIDBase:      100,
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+
+	rt, ok := rtAny.(*firecrackerRuntime)
+	if !ok {
+		t.Fatal("expected firecracker runtime")
+	}
+
+	rt.waitForSocketFn = func(socketPath string, waitErrCh <-chan error) error {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(socketPath); err == nil {
+				return nil
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		return os.ErrNotExist
+	}
+	rt.newUnixClientFn = func(string) *http.Client {
+		return &http.Client{}
+	}
+	rt.putJSONFn = func(_ *http.Client, _ string, _ any) error {
+		return nil
+	}
+
+	vmid, err := rt.Start("sess_firecracker")
+	if err != nil {
+		t.Fatalf("start firecracker runtime: %v", err)
+	}
+	if vmid != "sess_firecracker" {
+		t.Fatalf("unexpected vmid: %s", vmid)
+	}
+
+	base := filepath.Join(root, "runtime", "firecracker", "sess_firecracker")
+	for _, path := range []string{
+		filepath.Join(base, "firecracker.sock"),
+		filepath.Join(base, "firecracker.pid"),
+		filepath.Join(base, "console.log"),
+		filepath.Join(base, "metrics.log"),
+		filepath.Join(base, "config", "machine-config.json"),
+		filepath.Join(base, "config", "boot-source.json"),
+		filepath.Join(base, "config", "rootfs-drive.json"),
+		filepath.Join(base, "config", "vsock.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected artifact %s: %v", path, err)
+		}
+	}
+
+	if err := rt.Stop(vmid); err != nil {
+		t.Fatalf("stop firecracker runtime: %v", err)
+	}
+	if _, err := os.Stat(base); !os.IsNotExist(err) {
+		t.Fatalf("expected runtime directory to be removed, got err=%v", err)
+	}
+}
+
+func TestFirecrackerPreflightRequiresAssets(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	kernel := filepath.Join(root, "vmlinux.bin")
+	rootfs := filepath.Join(root, "rootfs.ext4")
+	kvm := filepath.Join(root, "kvm")
+	bin := filepath.Join(root, "fake-firecracker")
+
+	for _, path := range []string{kernel, rootfs, kvm, bin} {
+		if err := os.WriteFile(path, []byte("test"), 0o755); err != nil {
+			t.Fatalf("write fixture %s: %v", path, err)
+		}
+	}
+
+	tests := []struct {
+		name string
+		cfg  Config
+		want error
+	}{
+		{
+			name: "missing binary",
+			cfg: Config{
+				Root:              root,
+				Provider:          "firecracker",
+				FirecrackerBinary: filepath.Join(root, "does-not-exist"),
+				KernelImage:       kernel,
+				RootfsImage:       rootfs,
+				KVMDevice:         kvm,
+			},
+			want: ErrFirecrackerBinaryNotFound,
+		},
+		{
+			name: "missing kernel env",
+			cfg: Config{
+				Root:              root,
+				Provider:          "firecracker",
+				FirecrackerBinary: bin,
+				RootfsImage:       rootfs,
+				KVMDevice:         kvm,
+			},
+			want: ErrFirecrackerKernelRequired,
+		},
+		{
+			name: "missing kernel file",
+			cfg: Config{
+				Root:              root,
+				Provider:          "firecracker",
+				FirecrackerBinary: bin,
+				KernelImage:       filepath.Join(root, "missing-kernel"),
+				RootfsImage:       rootfs,
+				KVMDevice:         kvm,
+			},
+			want: ErrFirecrackerKernelNotFound,
+		},
+		{
+			name: "missing rootfs env",
+			cfg: Config{
+				Root:              root,
+				Provider:          "firecracker",
+				FirecrackerBinary: bin,
+				KernelImage:       kernel,
+				KVMDevice:         kvm,
+			},
+			want: ErrFirecrackerRootfsRequired,
+		},
+		{
+			name: "missing rootfs file",
+			cfg: Config{
+				Root:              root,
+				Provider:          "firecracker",
+				FirecrackerBinary: bin,
+				KernelImage:       kernel,
+				RootfsImage:       filepath.Join(root, "missing-rootfs"),
+				KVMDevice:         kvm,
+			},
+			want: ErrFirecrackerRootfsNotFound,
+		},
+		{
+			name: "missing kvm device",
+			cfg: Config{
+				Root:              root,
+				Provider:          "firecracker",
+				FirecrackerBinary: bin,
+				KernelImage:       kernel,
+				RootfsImage:       rootfs,
+				KVMDevice:         filepath.Join(root, "missing-kvm"),
+			},
+			want: ErrKVMDeviceNotAvailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rtAny, err := NewWithConfig(tt.cfg)
+			if err != nil {
+				t.Fatalf("new runtime: %v", err)
+			}
+
+			rt := rtAny.(*firecrackerRuntime)
+			err = rt.preflight()
+			if err == nil {
+				t.Fatal("expected preflight failure")
+			}
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestFirecrackerIntegrationLifecycle(t *testing.T) {
+	t.Helper()
+
+	if runtime.GOOS != "linux" {
+		t.Skip("firecracker integration test requires linux")
+	}
+	if os.Getenv("AIR_FIRECRACKER_INTEGRATION") != "1" {
+		t.Skip("set AIR_FIRECRACKER_INTEGRATION=1 to run firecracker integration test")
+	}
+
+	kernel := os.Getenv("AIR_FIRECRACKER_KERNEL")
+	if kernel == "" {
+		t.Skip("AIR_FIRECRACKER_KERNEL is required")
+	}
+	rootfs := os.Getenv("AIR_FIRECRACKER_ROOTFS")
+	if rootfs == "" {
+		t.Skip("AIR_FIRECRACKER_ROOTFS is required")
+	}
+	binary := os.Getenv("AIR_FIRECRACKER_BIN")
+	if binary == "" {
+		binary = "firecracker"
+	}
+	kvm := os.Getenv("AIR_KVM_DEVICE")
+	if kvm == "" {
+		kvm = "/dev/kvm"
+	}
+
+	rtAny, err := NewWithConfig(Config{
+		Root:              filepath.Join(t.TempDir(), "runtime"),
+		Provider:          "firecracker",
+		FirecrackerBinary: binary,
+		KernelImage:       kernel,
+		RootfsImage:       rootfs,
+		KVMDevice:         kvm,
+		VSockCIDBase:      1000,
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+
+	rt := rtAny.(*firecrackerRuntime)
+	vmid, err := rt.Start("integration")
+	if err != nil {
+		t.Fatalf("start firecracker runtime: %v", err)
+	}
+	defer func() {
+		if err := rt.Stop(vmid); err != nil {
+			t.Fatalf("stop firecracker runtime: %v", err)
+		}
+	}()
+
+	paths := rt.paths(vmid)
+	for _, path := range []string{paths.pidPath, paths.socketPath, paths.consolePath, paths.metricsPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected artifact %s: %v", path, err)
+		}
+	}
+}
