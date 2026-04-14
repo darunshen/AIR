@@ -17,7 +17,7 @@ type ExecResult struct {
 
 type Manager struct {
 	store *store.Store
-	vm    *vm.Runtime
+	vm    vm.Runtime
 }
 
 func NewManager() (*Manager, error) {

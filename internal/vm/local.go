@@ -11,25 +11,16 @@ import (
 	"time"
 )
 
-type Runtime struct {
+type localRuntime struct {
 	root string
 }
 
-type ExecResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+func newLocalRuntime(cfg Config) (Runtime, error) {
+	return &localRuntime{root: filepath.Join(cfg.Root, "local")}, nil
 }
 
-func New(root string) (*Runtime, error) {
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return nil, err
-	}
-	return &Runtime{root: root}, nil
-}
-
-func (r *Runtime) Start(sessionID string) (string, error) {
-	base := filepath.Join(r.root, sessionID)
+func (r *localRuntime) Start(sessionID string) (string, error) {
+	base := sessionRoot(r.root, sessionID)
 	workspace := filepath.Join(base, "workspace")
 	taskDir := filepath.Join(base, "task")
 
@@ -42,8 +33,8 @@ func (r *Runtime) Start(sessionID string) (string, error) {
 	return sessionID, nil
 }
 
-func (r *Runtime) Exec(sessionID, command string, timeout time.Duration) (*ExecResult, error) {
-	base := filepath.Join(r.root, sessionID)
+func (r *localRuntime) Exec(sessionID, command string, timeout time.Duration) (*ExecResult, error) {
+	base := sessionRoot(r.root, sessionID)
 	workspace := filepath.Join(base, "workspace")
 	taskDir := filepath.Join(base, "task")
 	cmdPath := filepath.Join(taskDir, "cmd.sh")
@@ -107,8 +98,8 @@ func (r *Runtime) Exec(sessionID, command string, timeout time.Duration) (*ExecR
 	}, nil
 }
 
-func (r *Runtime) Stop(vmid string) error {
-	base := filepath.Join(r.root, vmid)
+func (r *localRuntime) Stop(vmid string) error {
+	base := sessionRoot(r.root, vmid)
 	if _, err := os.Stat(base); err != nil {
 		return fmt.Errorf("runtime not found: %w", err)
 	}
