@@ -107,36 +107,9 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 		return "", err
 	}
 
-	machineConfig := firecrackerMachineConfig{
-		VCPUCount:  1,
-		MemSizeMiB: 256,
-		Smt:        false,
-	}
-	bootSource := firecrackerBootSource{
-		KernelImagePath: r.kernelImage,
-		BootArgs:        "console=ttyS0 reboot=k panic=1 pci=off",
-	}
-	rootfsDrive := firecrackerDrive{
-		DriveID:      "rootfs",
-		PathOnHost:   r.rootfsImage,
-		IsRootDevice: true,
-		IsReadOnly:   false,
-	}
-	vsockConfig := firecrackerVsock{
-		VsockID:  "root",
-		GuestCID: r.vsockCIDBase + cidOffset(sessionID),
-		UdsPath:  paths.vsockPath,
-	}
-
-	for filePath, payload := range map[string]any{
-		paths.machineConfigPath: machineConfig,
-		paths.bootSourcePath:    bootSource,
-		paths.rootfsConfigPath:  rootfsDrive,
-		paths.vsockConfigPath:   vsockConfig,
-	} {
-		if err := writeJSONFile(filePath, payload); err != nil {
-			return "", err
-		}
+	payloads := r.payloads(sessionID, paths)
+	if err := r.writeConfigSnapshot(paths, payloads); err != nil {
+		return "", err
 	}
 
 	cmd := exec.Command(r.binary, "--api-sock", paths.socketPath)
@@ -177,22 +150,22 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 	}
 
 	client := newUnixClientFn(paths.socketPath)
-	if err := putJSONFn(client, "/machine-config", machineConfig); err != nil {
+	if err := putJSONFn(client, "/machine-config", payloads.machineConfig); err != nil {
 		_ = cmd.Process.Kill()
 		return "", fmt.Errorf("configure firecracker machine config: %w", err)
 	}
 
-	if err := putJSONFn(client, "/boot-source", bootSource); err != nil {
+	if err := putJSONFn(client, "/boot-source", payloads.bootSource); err != nil {
 		_ = cmd.Process.Kill()
 		return "", fmt.Errorf("configure firecracker boot source: %w", err)
 	}
 
-	if err := putJSONFn(client, "/drives/rootfs", rootfsDrive); err != nil {
+	if err := putJSONFn(client, "/drives/rootfs", payloads.rootfsDrive); err != nil {
 		_ = cmd.Process.Kill()
 		return "", fmt.Errorf("configure firecracker rootfs drive: %w", err)
 	}
 
-	if err := putJSONFn(client, "/vsocks/root", vsockConfig); err != nil {
+	if err := putJSONFn(client, "/vsock", payloads.vsockConfig); err != nil {
 		_ = cmd.Process.Kill()
 		return "", fmt.Errorf("configure firecracker vsock: %w", err)
 	}
@@ -355,6 +328,52 @@ func (r *firecrackerRuntime) paths(sessionID string) firecrackerPaths {
 		rootfsConfigPath:  filepath.Join(configDir, "rootfs-drive.json"),
 		vsockConfigPath:   filepath.Join(configDir, "vsock.json"),
 	}
+}
+
+type firecrackerPayloads struct {
+	machineConfig firecrackerMachineConfig
+	bootSource    firecrackerBootSource
+	rootfsDrive   firecrackerDrive
+	vsockConfig   firecrackerVsock
+}
+
+func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) firecrackerPayloads {
+	return firecrackerPayloads{
+		machineConfig: firecrackerMachineConfig{
+			VCPUCount:  1,
+			MemSizeMiB: 256,
+			Smt:        false,
+		},
+		bootSource: firecrackerBootSource{
+			KernelImagePath: r.kernelImage,
+			BootArgs:        "console=ttyS0 reboot=k panic=1 pci=off",
+		},
+		rootfsDrive: firecrackerDrive{
+			DriveID:      "rootfs",
+			PathOnHost:   r.rootfsImage,
+			IsRootDevice: true,
+			IsReadOnly:   false,
+		},
+		vsockConfig: firecrackerVsock{
+			VsockID:  "root",
+			GuestCID: r.vsockCIDBase + cidOffset(sessionID),
+			UdsPath:  paths.vsockPath,
+		},
+	}
+}
+
+func (r *firecrackerRuntime) writeConfigSnapshot(paths firecrackerPaths, payloads firecrackerPayloads) error {
+	for filePath, payload := range map[string]any{
+		paths.machineConfigPath: payloads.machineConfig,
+		paths.bootSourcePath:    payloads.bootSource,
+		paths.rootfsConfigPath:  payloads.rootfsDrive,
+		paths.vsockConfigPath:   payloads.vsockConfig,
+	} {
+		if err := writeJSONFile(filePath, payload); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func touchFile(path string) error {
