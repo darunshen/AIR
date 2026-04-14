@@ -10,12 +10,30 @@ type Runtime interface {
 	Start(sessionID string) (string, error)
 	Exec(sessionID, command string, timeout time.Duration) (*ExecResult, error)
 	Stop(vmid string) error
+	Inspect(sessionID string) (*InspectInfo, error)
 }
 
 type ExecResult struct {
 	Stdout   string
 	Stderr   string
 	ExitCode int
+}
+
+type InspectInfo struct {
+	Provider      string `json:"provider"`
+	SessionID     string `json:"session_id"`
+	RootPath      string `json:"root_path"`
+	Exists        bool   `json:"exists"`
+	Running       bool   `json:"running"`
+	ConsolePath   string `json:"console_path,omitempty"`
+	WorkspacePath string `json:"workspace_path,omitempty"`
+	TaskPath      string `json:"task_path,omitempty"`
+	SocketPath    string `json:"socket_path,omitempty"`
+	PIDPath       string `json:"pid_path,omitempty"`
+	PID           int    `json:"pid,omitempty"`
+	VSockPath     string `json:"vsock_path,omitempty"`
+	MetricsPath   string `json:"metrics_path,omitempty"`
+	ConfigPath    string `json:"config_path,omitempty"`
 }
 
 type Config struct {
@@ -29,7 +47,7 @@ type Config struct {
 }
 
 func New(root string) (Runtime, error) {
-	return NewWithConfig(resolveRuntimeConfig(root))
+	return NewWithConfig(ResolveConfig(root))
 }
 
 func NewWithConfig(cfg Config) (Runtime, error) {

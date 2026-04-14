@@ -20,6 +20,14 @@
   - `docs/operations-manual.md`
   - `docs/firecracker-deployment-guide.md`
 
+- 基础调试能力已接入
+  - `air session list`
+  - `air session inspect <id>`
+  - `air session console <id>`
+  - `air session console <id> --follow`
+  - runtime inspect 已返回 provider、pid、console、socket、vsock、config 等路径
+  - 旧 session 缺失 `provider` 时可自动补全
+
 ## P0: Guest Agent 与通信
 
 - 设计最小 `air-agent`
@@ -88,10 +96,12 @@
 ## P2: CLI 与产品能力
 
 - 增加 `air run`
-- 增加 `air session list`
-- 增加 `air session inspect`
 - 增加 timeout 配置能力
 - 增加资源限制配置能力
+- 将 `air session console` 从日志查看升级为更强的调试入口
+  - 明确串口 attach 方案
+  - 评估可交互控制台能力
+  - 区分“console 查看”与“guest exec”
 
 ## P2: 生命周期与回收
 
