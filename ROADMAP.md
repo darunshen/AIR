@@ -31,8 +31,9 @@ Target: turn the MVP into a stable developer-facing foundation.
 
 Scope:
 
+- Firecracker runtime integration
 - guest agent inside VM
-- `virtio-serial` or `vsock`
+- `virtio-vsock`
 - HTTP API
 - `base image + overlay`
 - timeout handling

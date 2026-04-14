@@ -84,7 +84,7 @@ CopyFromVM(vmID, src, dst)
 演进路线：
 
 - MVP：轮询 `/task/cmd.sh` 并写 `/task/result.txt`
-- V1：改为 `virtio-serial` 或 `vsock`
+- V1：改为 `virtio-vsock`
 
 ### 3.6 Isolation Controller
 
@@ -154,9 +154,14 @@ GC 策略：
 ## 8. 技术选型建议
 
 - 控制面：Go
-- Hypervisor：优先复用现有实现，否则 KVM + QEMU
+- Hypervisor：主方案采用 Firecracker（基于 KVM），QEMU/KVM 作为调试或兼容兜底
 - Guest：最小 rootfs，优先 Ubuntu 或 Yocto 镜像
-- 通信：MVP 文件通信，V1 `virtio-serial`，备选 `vsock`
+- 通信：主方案采用 `virtio-vsock`，MVP 文件通信仅用于本地链路验证
+
+更多细节见：
+
+- [虚拟化技术选型](virtualization-selection.md)
+- [VM Runtime 设计](vm-runtime-design.md)
 
 ## 9. 后续演进
 
