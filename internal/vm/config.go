@@ -16,7 +16,7 @@ const (
 	defaultVSockCIDBase        uint32 = 100
 )
 
-func resolveRuntimeConfig(root string) Config {
+func ResolveConfig(root string) Config {
 	cwd, _ := os.Getwd()
 
 	return Config{

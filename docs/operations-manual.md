@@ -12,6 +12,9 @@
 截至当前代码版本：
 
 - `air session create`
+- `air session list`
+- `air session inspect`
+- `air session console`
 - `air session exec`
 - `air session delete`
 
@@ -32,6 +35,18 @@
 - `firecracker` provider 下真实 `Exec()`
 
 因此，当前如果切到 `firecracker` provider，`Start()` 和 `Stop()` 可以验证，`Exec()` 仍会返回未就绪错误。
+
+当前调试方式：
+
+- 用 `air session list` 查看现有 session
+- 用 `air session inspect <id>` 查看 session 与 runtime 状态
+- 用 `air session console <id>` 查看串口日志
+- 用 `air session console <id> --follow` 持续跟随串口日志
+
+注意：
+
+- 这里的 `console` 目前是日志查看，不是交互式 guest shell
+- 真正的“进入虚拟机执行命令”仍然要等 guest agent 和 `vsock exec`
 
 ## 2. 环境要求
 
@@ -110,6 +125,25 @@ go run ./cmd/air session delete <session_id>
 
 删除后会同时移除对应运行目录，并从 `data/sessions.json` 中清除记录。
 
+### 4.4 查看 session 列表
+
+```bash
+go run ./cmd/air session list
+```
+
+### 4.5 查看 session 详情
+
+```bash
+go run ./cmd/air session inspect <session_id>
+```
+
+### 4.6 查看控制台日志
+
+```bash
+go run ./cmd/air session console <session_id>
+go run ./cmd/air session console <session_id> --follow
+```
+
 ## 5. Firecracker 模式操作
 
 ### 5.1 环境变量
@@ -180,6 +214,14 @@ go run ./cmd/air session delete <session_id>
 - 读取 `firecracker.pid`
 - 杀掉 Firecracker 进程
 - 清理整個 session 运行目录
+
+### 5.5 查看 Firecracker 状态和日志
+
+```bash
+go run ./cmd/air session inspect <session_id>
+go run ./cmd/air session console <session_id>
+go run ./cmd/air session console <session_id> --follow
+```
 
 ## 6. 运行目录说明
 

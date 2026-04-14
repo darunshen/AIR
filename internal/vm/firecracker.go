@@ -221,6 +221,46 @@ func (r *firecrackerRuntime) Stop(vmid string) error {
 	return os.RemoveAll(paths.base)
 }
 
+func (r *firecrackerRuntime) Inspect(sessionID string) (*InspectInfo, error) {
+	paths := r.paths(sessionID)
+
+	_, err := os.Stat(paths.base)
+	exists := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	info := &InspectInfo{
+		Provider:    "firecracker",
+		SessionID:   sessionID,
+		RootPath:    paths.base,
+		Exists:      exists,
+		ConsolePath: paths.consolePath,
+		SocketPath:  paths.socketPath,
+		PIDPath:     paths.pidPath,
+		VSockPath:   paths.vsockPath,
+		MetricsPath: paths.metricsPath,
+		ConfigPath:  paths.configDir,
+	}
+
+	pidRaw, err := os.ReadFile(paths.pidPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return info, nil
+		}
+		return nil, fmt.Errorf("read firecracker pid: %w", err)
+	}
+
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(pidRaw)))
+	if err != nil {
+		return nil, fmt.Errorf("parse firecracker pid: %w", err)
+	}
+
+	info.PID = pid
+	info.Running = processExists(pid)
+	return info, nil
+}
+
 func (r *firecrackerRuntime) preflight() error {
 	if _, err := exec.LookPath(r.binary); err != nil {
 		return errFirecrackerBinaryNotFound(r.binary, err)

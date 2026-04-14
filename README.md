@@ -47,6 +47,9 @@ Create VM -> Load environment -> Execute -> Return output -> Destroy VM
 
 ```bash
 air session create
+air session list
+air session inspect <id>
+air session console <id> --follow
 air session exec <id> "echo hello > a.txt"
 air session exec <id> "cat a.txt"
 air session delete <id>
@@ -164,6 +167,9 @@ air run hello.py
 
 ```bash
 air session create
+air session list
+air session inspect <id>
+air session console <id> --follow
 air session exec <id> "echo hello > a.txt"
 air session exec <id> "cat a.txt"
 air session delete <id>
@@ -250,6 +256,7 @@ Current implementation note:
 - `session create / exec / delete` is being built first
 - The `vm` layer now supports a configurable provider with `local` as the default and `firecracker` as the experimental VM-backed path
 - Firecracker bootstrapping is wired through the host-side API flow, while guest `vsock` exec is still pending
+- `air session list` / `inspect` / `console` are available for basic debugging
 
 Runtime configuration:
 
@@ -277,3 +284,15 @@ Real-environment lifecycle test:
 
 - `AIR_FIRECRACKER_INTEGRATION=1 go test ./internal/vm -run TestFirecrackerIntegrationLifecycle`
 - The test is skipped unless Linux, `/dev/kvm`, Firecracker, kernel, and rootfs are all available
+
+Debugging commands:
+
+- `air session list`
+- `air session inspect <id>`
+- `air session console <id>`
+- `air session console <id> --follow`
+
+Current console limitation:
+
+- `air session console` currently shows the serial console log file
+- It is useful for boot diagnostics, but it is not an interactive guest shell yet

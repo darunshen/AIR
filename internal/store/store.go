@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/darunshen/AIR/internal/model"
 )
@@ -62,6 +63,19 @@ func (s *Store) Get(id string) (*model.Session, error) {
 	}
 
 	return nil, errors.New("session not found")
+}
+
+func (s *Store) List() ([]*model.Session, error) {
+	data, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+
+	sessions := append([]*model.Session(nil), data.Sessions...)
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+	})
+	return sessions, nil
 }
 
 func (s *Store) Delete(id string) error {

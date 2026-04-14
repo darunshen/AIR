@@ -105,6 +105,20 @@ while true; do sleep 1; done
 		}
 	}
 
+	info, err := rt.Inspect(vmid)
+	if err != nil {
+		t.Fatalf("inspect firecracker runtime: %v", err)
+	}
+	if info.Provider != "firecracker" {
+		t.Fatalf("unexpected provider: %s", info.Provider)
+	}
+	if !info.Exists || !info.Running {
+		t.Fatalf("expected running firecracker runtime, got exists=%v running=%v", info.Exists, info.Running)
+	}
+	if info.ConsolePath == "" || info.SocketPath == "" || info.PIDPath == "" || info.ConfigPath == "" {
+		t.Fatalf("expected populated firecracker inspect info, got %+v", info)
+	}
+
 	if err := rt.Stop(vmid); err != nil {
 		t.Fatalf("stop firecracker runtime: %v", err)
 	}

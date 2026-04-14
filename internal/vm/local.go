@@ -105,3 +105,25 @@ func (r *localRuntime) Stop(vmid string) error {
 	}
 	return os.RemoveAll(base)
 }
+
+func (r *localRuntime) Inspect(sessionID string) (*InspectInfo, error) {
+	base := sessionRoot(r.root, sessionID)
+	workspace := filepath.Join(base, "workspace")
+	taskDir := filepath.Join(base, "task")
+
+	_, err := os.Stat(base)
+	exists := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	return &InspectInfo{
+		Provider:      "local",
+		SessionID:     sessionID,
+		RootPath:      base,
+		Exists:        exists,
+		Running:       exists,
+		WorkspacePath: workspace,
+		TaskPath:      taskDir,
+	}, nil
+}
