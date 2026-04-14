@@ -296,3 +296,8 @@ Current console limitation:
 
 - `air session console` currently shows the serial console log file
 - It is useful for boot diagnostics, but it is not an interactive guest shell yet
+
+Current status behavior:
+
+- `air session list` and `air session inspect` refresh session status from the runtime before printing
+- If the runtime directory still exists but the VM process has exited, the session status is reported as `stopped`

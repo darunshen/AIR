@@ -47,6 +47,7 @@
 
 - 这里的 `console` 目前是日志查看，不是交互式 guest shell
 - 真正的“进入虚拟机执行命令”仍然要等 guest agent 和 `vsock exec`
+- `list` / `inspect` 会根据 runtime 实况刷新 session 状态，不只是读取 JSON 中的旧值
 
 ## 2. 环境要求
 
