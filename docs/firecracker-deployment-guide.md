@@ -104,6 +104,25 @@ sudo setfacl -m u:${USER}:rw /dev/kvm
 export AIR_FIRECRACKER_BIN=/absolute/path/to/firecracker
 ```
 
+如果你想直接按 AIR 当前推荐路径准备整套实验资产，可以直接运行仓库脚本：
+
+```bash
+scripts/fetch-firecracker-demo-assets.sh
+```
+
+默认会把以下文件放到：
+
+```text
+assets/firecracker/
+```
+
+包括：
+
+- 官方 release 的 `firecracker`
+- Firecracker CI kernel `vmlinux-*`
+- Firecracker CI rootfs 源文件 `ubuntu-*.squashfs.upstream`
+- 转换后的 `ubuntu-*.ext4`
+
 ### 4.2 从源码构建
 
 如果你需要自行构建，可按 Firecracker 官方流程使用其开发工具链构建。该路径通常要求：
@@ -127,6 +146,21 @@ AIR 当前的 Firecracker provider 依赖两个宿主机文件：
 export AIR_FIRECRACKER_KERNEL=/absolute/path/to/vmlinux
 export AIR_FIRECRACKER_ROOTFS=/absolute/path/to/rootfs.ext4
 ```
+
+### 5.0 当前推荐做法
+
+当前 AIR 建议：
+
+1. Firecracker 二进制先使用官方 release
+2. `vmlinux` / `rootfs.ext4` 先使用 Firecracker 官方 Getting Started 中引用的 demo 资产
+
+仓库脚本已经把这条路径固化好了：
+
+```bash
+scripts/fetch-firecracker-demo-assets.sh
+```
+
+脚本流程基于 Firecracker 官方 Getting Started，但省略了 SSH key 注入，因为 AIR 当前并不通过 SSH 进入 guest。
 
 ### 5.1 最低要求
 
@@ -167,6 +201,15 @@ export AIR_KVM_DEVICE=/dev/kvm
 ```
 
 如果你的 shell 不会自动展开 `~`，请改用绝对路径。
+
+如果使用仓库脚本，建议直接采用脚本默认目录，不要再手工移动文件：
+
+```bash
+export AIR_FIRECRACKER_BIN="$(pwd)/assets/firecracker/firecracker"
+export AIR_FIRECRACKER_KERNEL="$(pwd)/assets/firecracker/hello-vmlinux.bin"
+export AIR_FIRECRACKER_ROOTFS="$(pwd)/assets/firecracker/hello-rootfs.ext4"
+export AIR_KVM_DEVICE=/dev/kvm
+```
 
 ## 6. 验证文件是否可用
 

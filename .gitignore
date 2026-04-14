@@ -3,3 +3,4 @@ runtime/
 air
 *.test
 *.test.exe
+assets/firecracker/

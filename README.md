@@ -259,6 +259,11 @@ Runtime configuration:
 - `AIR_FIRECRACKER_ROOTFS`: rootfs image path required by the `firecracker` provider
 - `AIR_KVM_DEVICE`: KVM device path, default `/dev/kvm`
 
+Startup shortcut:
+
+- After running `scripts/fetch-firecracker-demo-assets.sh`, you can usually start the Firecracker provider from the repository root with only `AIR_VM_RUNTIME=firecracker`
+- If `assets/firecracker/firecracker`, `assets/firecracker/hello-vmlinux.bin`, and `assets/firecracker/hello-rootfs.ext4` exist, AIR will auto-discover them
+
 Firecracker runtime layout:
 
 - `runtime/sessions/firecracker/<session_id>/firecracker.sock`

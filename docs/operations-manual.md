@@ -134,6 +134,18 @@ export AIR_KVM_DEVICE=/dev/kvm
 
 - [Firecracker 真机部署指南](firecracker-deployment-guide.md)
 
+如果只是先把 AIR 当前的 Firecracker 生命周期跑通，优先执行：
+
+```bash
+scripts/fetch-firecracker-demo-assets.sh
+```
+
+它会下载：
+
+- 官方 release 的 `firecracker`
+- 官方 demo `hello-vmlinux.bin`
+- 官方 demo `hello-rootfs.ext4`
+
 ### 5.2 创建 session
 
 ```bash
