@@ -46,3 +46,7 @@ func errKVMDeviceNotAvailable(path string, err error) error {
 func errGuestAgentNotReady(sessionID, vsockPath string) error {
 	return fmt.Errorf("%w for session %s: vsock path %s is not serving requests yet", ErrGuestAgentNotReady, sessionID, vsockPath)
 }
+
+func errGuestAgentTransport(sessionID, vsockPath string, err error) error {
+	return fmt.Errorf("%w for session %s via %s: %v", ErrGuestAgentNotReady, sessionID, vsockPath, err)
+}

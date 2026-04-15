@@ -11,6 +11,7 @@ const (
 	defaultFirecrackerAssetDir        = "assets/firecracker"
 	defaultBundledKernelImage         = "hello-vmlinux.bin"
 	defaultBundledRootfsImage         = "hello-rootfs.ext4"
+	defaultBundledPatchedRootfsImage  = "hello-rootfs-air.ext4"
 	defaultBundledFirecracker         = "firecracker"
 	defaultKVMDevice                  = "/dev/kvm"
 	defaultVSockCIDBase        uint32 = 100
@@ -50,6 +51,9 @@ func resolveFirecrackerKernel(cwd string) string {
 func resolveFirecrackerRootfs(cwd string) string {
 	if value := os.Getenv("AIR_FIRECRACKER_ROOTFS"); value != "" {
 		return value
+	}
+	if bundled := bundledFirecrackerAsset(cwd, defaultBundledPatchedRootfsImage); bundled != "" {
+		return bundled
 	}
 	return bundledFirecrackerAsset(cwd, defaultBundledRootfsImage)
 }

@@ -259,8 +259,9 @@ Current implementation note:
 - Phase 1 has started with a minimal Go CLI skeleton
 - `session create / exec / delete` is being built first
 - The `vm` layer now supports a configurable provider with `local` as the default and `firecracker` as the experimental VM-backed path
-- Firecracker bootstrapping is wired through the host-side API flow, while guest `vsock` exec is still pending
+- Firecracker bootstrapping, guest `air-agent`, and host/guest `vsock exec` are wired end to end
 - `air session list` / `inspect` / `console` are available for basic debugging
+- `scripts/prepare-firecracker-rootfs.sh` rebuilds the demo rootfs with `air-agent` baked in and enabled through OpenRC `local.d`
 
 Runtime configuration:
 
@@ -272,8 +273,8 @@ Runtime configuration:
 
 Startup shortcut:
 
-- After running `scripts/fetch-firecracker-demo-assets.sh`, you can usually start the Firecracker provider from the repository root with only `AIR_VM_RUNTIME=firecracker`
-- If `assets/firecracker/firecracker`, `assets/firecracker/hello-vmlinux.bin`, and `assets/firecracker/hello-rootfs.ext4` exist, AIR will auto-discover them
+- After running `scripts/fetch-firecracker-demo-assets.sh` and `scripts/prepare-firecracker-rootfs.sh`, you can usually start the Firecracker provider from the repository root with only `AIR_VM_RUNTIME=firecracker`
+- If `assets/firecracker/firecracker`, `assets/firecracker/hello-vmlinux.bin`, and `assets/firecracker/hello-rootfs-air.ext4` exist, AIR will auto-discover them
 - You can also bypass the default provider and create a session explicitly with `air session create --provider firecracker`
 
 Firecracker runtime layout:

@@ -25,16 +25,13 @@
 - 启动前环境预检
 - Firecracker 进程启动
 - Host 侧 API 配置
+- guest rootfs 注入脚本
+- guest `air-agent` 启动链
+- Host/Guest `vsock exec`
 - 运行目录和日志产物落盘
 - `Stop()` 清理
 
-但仍未完成：
-
-- guest 内 `air-agent`
-- Host/Guest `vsock` 协议
-- `firecracker` provider 下真实 `Exec()`
-
-因此，当前如果切到 `firecracker` provider，`Start()` 和 `Stop()` 可以验证，`Exec()` 仍会返回未就绪错误。
+因此，当前如果切到 `firecracker` provider，并且 rootfs 已通过仓库脚本注入 `air-agent`，`Start()`、`Exec()` 和 `Stop()` 都可以真实工作。
 
 当前调试方式：
 
@@ -46,7 +43,6 @@
 注意：
 
 - 这里的 `console` 目前是日志查看，不是交互式 guest shell
-- 真正的“进入虚拟机执行命令”仍然要等 guest agent 和 `vsock exec`
 - `list` / `inspect` 会根据 runtime 实况刷新 session 状态，不只是读取 JSON 中的旧值
 
 ## 2. 环境要求
@@ -175,6 +171,7 @@ export AIR_KVM_DEVICE=/dev/kvm
 
 ```bash
 scripts/fetch-firecracker-demo-assets.sh
+scripts/prepare-firecracker-rootfs.sh
 ```
 
 它会下载：
@@ -182,6 +179,10 @@ scripts/fetch-firecracker-demo-assets.sh
 - 官方 release 的 `firecracker`
 - 官方 demo `hello-vmlinux.bin`
 - 官方 demo `hello-rootfs.ext4`
+
+并生成：
+
+- 注入了 `air-agent` 的 `hello-rootfs-air.ext4`
 
 ### 5.2 创建 session
 
@@ -202,15 +203,13 @@ go run ./cmd/air session create
 go run ./cmd/air session create --provider firecracker
 ```
 
-### 5.3 当前限制
-
-当前版本下，不要把 `firecracker` provider 当作完整可执行环境。下面命令会失败：
+### 5.3 执行命令
 
 ```bash
 go run ./cmd/air session exec <session_id> "uname -a"
 ```
 
-原因不是 session 创建失败，而是 guest agent 和 `vsock exec` 还未实现。
+前提是当前使用的 rootfs 已经过 `scripts/prepare-firecracker-rootfs.sh` 处理，或者 `AIR_FIRECRACKER_ROOTFS` 指向等价的已注入镜像。
 
 ### 5.4 删除 session
 

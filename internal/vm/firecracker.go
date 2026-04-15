@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -12,7 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/darunshen/AIR/internal/guestapi"
 )
 
 type firecrackerRuntime struct {
@@ -27,6 +31,7 @@ type firecrackerRuntime struct {
 	waitForSocketFn   func(string, <-chan error) error
 	newUnixClientFn   func(string) *http.Client
 	putJSONFn         func(*http.Client, string, any) error
+	dialVSockFn       func(string, uint32, time.Duration) (net.Conn, error)
 }
 
 type firecrackerMachineConfig struct {
@@ -116,6 +121,7 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 	cmd.Stdout = consoleFile
 	cmd.Stderr = consoleFile
 	cmd.Dir = paths.base
+	setDetachedProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return "", err
@@ -181,15 +187,63 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 }
 
 func (r *firecrackerRuntime) Exec(sessionID, command string, timeout time.Duration) (*ExecResult, error) {
-	_ = command
-	_ = timeout
-
 	paths := r.paths(sessionID)
-	if _, err := os.Stat(paths.vsockPath); err != nil {
-		return nil, errGuestAgentNotReady(sessionID, paths.vsockPath)
+	if timeout <= 0 {
+		timeout = 30 * time.Second
 	}
 
-	return nil, fmt.Errorf("%w for session %s: host/guest vsock exec protocol is not implemented yet", ErrGuestAgentNotReady, sessionID)
+	readyDeadline := timeout
+	if readyDeadline > 5*time.Second {
+		readyDeadline = 5 * time.Second
+	}
+
+	dialVSockFn := r.dialVSockFn
+	if dialVSockFn == nil {
+		dialVSockFn = dialFirecrackerVSock
+	}
+
+	conn, err := dialVSockFn(paths.vsockPath, guestapi.DefaultVSockPort, readyDeadline)
+	if err != nil {
+		return nil, errGuestAgentTransport(sessionID, paths.vsockPath, err)
+	}
+	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(timeout + 5*time.Second)); err != nil {
+		return nil, err
+	}
+
+	req := guestapi.ExecRequest{
+		Type:      guestapi.MessageTypeExec,
+		RequestID: fmt.Sprintf("%s-%d", sessionID, time.Now().UnixNano()),
+		Command:   command,
+		Timeout:   durationSeconds(timeout),
+	}
+
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return nil, err
+	}
+
+	var result guestapi.ExecResult
+	if err := json.NewDecoder(conn).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	stderr := result.Stderr
+	if result.Error != "" {
+		if stderr != "" && !strings.HasSuffix(stderr, "\n") {
+			stderr += "\n"
+		}
+		stderr += result.Error
+		if !strings.HasSuffix(stderr, "\n") {
+			stderr += "\n"
+		}
+	}
+
+	return &ExecResult{
+		Stdout:   result.Stdout,
+		Stderr:   stderr,
+		ExitCode: result.ExitCode,
+	}, nil
 }
 
 func (r *firecrackerRuntime) Stop(vmid string) error {
@@ -348,8 +402,7 @@ func cidOffset(sessionID string) uint32 {
 }
 
 func processExists(pid int) bool {
-	err := syscallKill(pid, 0)
-	return err == nil
+	return signalIndicatesProcessExists(pid)
 }
 
 func (r *firecrackerRuntime) paths(sessionID string) firecrackerPaths {
@@ -431,4 +484,87 @@ func writeJSONFile(path string, payload any) error {
 	}
 	body = append(body, '\n')
 	return os.WriteFile(path, body, 0o644)
+}
+
+func durationSeconds(d time.Duration) int {
+	if d <= time.Second {
+		return 1
+	}
+	return int((d + time.Second - 1) / time.Second)
+}
+
+func dialFirecrackerVSock(socketPath string, port uint32, timeout time.Duration) (net.Conn, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(socketPath); err != nil {
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		conn, err := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+		if err != nil {
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if err := conn.SetDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+			_ = conn.Close()
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		buffered, err := performVSockHandshake(conn, port)
+		if err != nil {
+			_ = conn.Close()
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if err := buffered.SetDeadline(time.Time{}); err != nil {
+			_ = buffered.Close()
+			lastErr = err
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		return buffered, nil
+	}
+
+	if lastErr == nil {
+		lastErr = os.ErrDeadlineExceeded
+	}
+	return nil, lastErr
+}
+
+func performVSockHandshake(conn net.Conn, port uint32) (net.Conn, error) {
+	reader := bufio.NewReader(conn)
+	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", port); err != nil {
+		return nil, err
+	}
+
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+
+	if !strings.HasPrefix(strings.TrimSpace(line), "OK") {
+		return nil, fmt.Errorf("unexpected vsock handshake response: %s", strings.TrimSpace(line))
+	}
+
+	return &bufferedConn{
+		Conn:   conn,
+		reader: reader,
+	}, nil
+}
+
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
 }
