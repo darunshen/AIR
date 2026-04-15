@@ -87,6 +87,14 @@ func (s *Server) handleStream(ctx context.Context, rw io.ReadWriter) error {
 		RequestID: req.RequestID,
 	}
 
+	if req.Type == guestapi.MessageTypeReady {
+		return encoder.Encode(guestapi.ReadyResult{
+			Type:      guestapi.MessageTypeReady,
+			RequestID: req.RequestID,
+			Status:    "ready",
+		})
+	}
+
 	if req.Type != guestapi.MessageTypeExec {
 		result.Error = fmt.Sprintf("unsupported request type: %s", req.Type)
 		result.ExitCode = 1

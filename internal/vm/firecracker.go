@@ -27,6 +27,7 @@ type firecrackerRuntime struct {
 	kvmDevice         string
 	vsockCIDBase      uint32
 	startupTimeout    time.Duration
+	guestReadyTimeout time.Duration
 	httpClientTimeout time.Duration
 	waitForSocketFn   func(string, <-chan error) error
 	newUnixClientFn   func(string) *http.Client
@@ -85,6 +86,7 @@ func newFirecrackerRuntime(cfg Config) (Runtime, error) {
 		kvmDevice:         cfg.KVMDevice,
 		vsockCIDBase:      cfg.VSockCIDBase,
 		startupTimeout:    5 * time.Second,
+		guestReadyTimeout: 10 * time.Second,
 		httpClientTimeout: 3 * time.Second,
 	}, nil
 }
@@ -181,6 +183,11 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 	}); err != nil {
 		_ = cmd.Process.Kill()
 		return "", fmt.Errorf("start firecracker instance: %w", err)
+	}
+
+	if err := r.waitForGuestReady(sessionID, paths); err != nil {
+		_ = cmd.Process.Kill()
+		return "", err
 	}
 
 	return sessionID, nil
@@ -484,6 +491,51 @@ func writeJSONFile(path string, payload any) error {
 	}
 	body = append(body, '\n')
 	return os.WriteFile(path, body, 0o644)
+}
+
+func (r *firecrackerRuntime) waitForGuestReady(sessionID string, paths firecrackerPaths) error {
+	timeout := r.guestReadyTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	dialVSockFn := r.dialVSockFn
+	if dialVSockFn == nil {
+		dialVSockFn = dialFirecrackerVSock
+	}
+
+	conn, err := dialVSockFn(paths.vsockPath, guestapi.DefaultVSockPort, timeout)
+	if err != nil {
+		return errGuestAgentTransport(sessionID, paths.vsockPath, err)
+	}
+	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
+
+	req := guestapi.ExecRequest{
+		Type:      guestapi.MessageTypeReady,
+		RequestID: fmt.Sprintf("%s-ready", sessionID),
+	}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return err
+	}
+
+	var result guestapi.ReadyResult
+	if err := json.NewDecoder(conn).Decode(&result); err != nil {
+		return err
+	}
+	if result.Type != guestapi.MessageTypeReady {
+		return fmt.Errorf("unexpected guest ready response type: %s", result.Type)
+	}
+	if result.Status != "ready" {
+		if result.Error != "" {
+			return errors.New(result.Error)
+		}
+		return fmt.Errorf("unexpected guest ready status: %s", result.Status)
+	}
+	return nil
 }
 
 func durationSeconds(d time.Duration) int {

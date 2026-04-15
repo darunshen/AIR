@@ -48,9 +48,9 @@
 
 ## P0: Guest Agent 与通信
 
-- 增加更明确的 guest ready 判定
-  - 当前可从串口看到 `[air-agent] boot hook start`
-  - 后续可引入显式 ready 握手
+- guest ready 判定已接入
+  - `Start()` 已等待 guest `ready` 握手
+  - 串口里仍可看到 `[air-agent] boot hook start`
 
 - 补强 Host/Guest 协议
   - request_id 的可观测性
