@@ -194,3 +194,56 @@ func TestSessionListRefreshesStoppedStatus(t *testing.T) {
 		t.Fatalf("expected missing runtime, got exists=%v running=%v", inspect.Runtime.Exists, inspect.Runtime.Running)
 	}
 }
+
+func TestCreateWithExplicitProvider(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "firecracker")
+	for _, path := range []string{
+		filepath.Join(assetsDir, "firecracker"),
+		filepath.Join(assetsDir, "hello-vmlinux.bin"),
+		filepath.Join(assetsDir, "hello-rootfs.ext4"),
+		filepath.Join(root, "dev", "kvm"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir path: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("test"), 0o755); err != nil {
+			t.Fatalf("write path %s: %v", path, err)
+		}
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+
+	t.Setenv("AIR_VM_RUNTIME", "local")
+	t.Setenv("AIR_FIRECRACKER_BIN", filepath.Join(root, "assets", "firecracker", "firecracker"))
+	t.Setenv("AIR_FIRECRACKER_KERNEL", filepath.Join(root, "assets", "firecracker", "hello-vmlinux.bin"))
+	t.Setenv("AIR_FIRECRACKER_ROOTFS", filepath.Join(root, "assets", "firecracker", "hello-rootfs.ext4"))
+	t.Setenv("AIR_KVM_DEVICE", filepath.Join(root, "dev", "kvm"))
+
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	s, err := manager.CreateWithProvider("local")
+	if err != nil {
+		t.Fatalf("create session with explicit local provider: %v", err)
+	}
+	if s.Provider != "local" {
+		t.Fatalf("expected local provider, got %q", s.Provider)
+	}
+}

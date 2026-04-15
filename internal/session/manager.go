@@ -51,12 +51,21 @@ func NewManagerWithPaths(storePath, runtimeRoot string) (*Manager, error) {
 }
 
 func (m *Manager) Create() (*model.Session, error) {
+	return m.CreateWithProvider("")
+}
+
+func (m *Manager) CreateWithProvider(provider string) (*model.Session, error) {
+	runtime, resolvedProvider, err := m.runtimeForProvider(provider)
+	if err != nil {
+		return nil, err
+	}
+
 	id, err := newID()
 	if err != nil {
 		return nil, err
 	}
 
-	vmid, err := m.vm.Start(id)
+	vmid, err := runtime.Start(id)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +74,7 @@ func (m *Manager) Create() (*model.Session, error) {
 	s := &model.Session{
 		ID:         id,
 		VMID:       vmid,
-		Provider:   m.provider,
+		Provider:   resolvedProvider,
 		Status:     "running",
 		CreatedAt:  now,
 		LastUsedAt: now,
@@ -210,13 +219,8 @@ func (m *Manager) ConsolePath(sessionID string) (string, error) {
 }
 
 func (m *Manager) runtimeForSession(s *model.Session) (vm.Runtime, error) {
-	if s.Provider == "" || s.Provider == m.provider {
-		return m.vm, nil
-	}
-	cfg := m.runtimeConfig
-	cfg.Root = m.runtimeRoot
-	cfg.Provider = s.Provider
-	return vm.NewWithConfig(cfg)
+	runtime, _, err := m.runtimeForProvider(s.Provider)
+	return runtime, err
 }
 
 func (m *Manager) ensureProvider(s *model.Session) error {
@@ -253,4 +257,24 @@ func (m *Manager) syncSessionState(s *model.Session, info *vm.InspectInfo) error
 
 	s.Status = next
 	return m.store.Save(s)
+}
+
+func (m *Manager) runtimeForProvider(provider string) (vm.Runtime, string, error) {
+	resolvedProvider := provider
+	if resolvedProvider == "" {
+		resolvedProvider = m.provider
+	}
+	if resolvedProvider == m.provider {
+		return m.vm, resolvedProvider, nil
+	}
+
+	cfg := m.runtimeConfig
+	cfg.Root = m.runtimeRoot
+	cfg.Provider = resolvedProvider
+
+	runtime, err := vm.NewWithConfig(cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	return runtime, resolvedProvider, nil
 }

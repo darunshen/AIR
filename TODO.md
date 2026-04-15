@@ -29,6 +29,10 @@
   - `list` / `inspect` 会按 runtime 实况刷新 session 状态
   - 旧 session 缺失 `provider` 时可自动补全
 
+- CLI 级 provider 选择能力已接入
+  - `air session create --provider local`
+  - `air session create --provider firecracker`
+
 ## P0: Guest Agent 与通信
 
 - 设计最小 `air-agent`
@@ -48,7 +52,6 @@
 ## P1: Runtime 集成
 
 - 为 `vm` provider 增加更直接的启动入口
-  - CLI 级 provider 选择能力
   - 配置文件方案
   - “使用仓库内 demo 资产”的一键入口
 
