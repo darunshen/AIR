@@ -86,6 +86,26 @@ while true; do sleep 1; done
 	rt.putJSONFn = func(_ *http.Client, _ string, _ any) error {
 		return nil
 	}
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	rt.dialVSockFn = func(string, uint32, time.Duration) (net.Conn, error) {
+		return clientConn, nil
+	}
+	go func() {
+		var req guestapi.ExecRequest
+		if err := json.NewDecoder(serverConn).Decode(&req); err != nil {
+			t.Errorf("decode ready request: %v", err)
+			return
+		}
+		if err := json.NewEncoder(serverConn).Encode(guestapi.ReadyResult{
+			Type:      guestapi.MessageTypeReady,
+			RequestID: req.RequestID,
+			Status:    "ready",
+		}); err != nil {
+			t.Errorf("encode ready response: %v", err)
+		}
+	}()
 
 	vmid, err := rt.Start("sess_firecracker")
 	if err != nil {
@@ -334,6 +354,63 @@ func TestFirecrackerExecReturnsGuestNotReady(t *testing.T) {
 	if !errors.Is(err, ErrGuestAgentNotReady) {
 		t.Fatalf("expected ErrGuestAgentNotReady, got %v", err)
 	}
+}
+
+func TestFirecrackerWaitForGuestReady(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	rtAny, err := NewWithConfig(Config{
+		Root:     root,
+		Provider: "firecracker",
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+
+	rt, ok := rtAny.(*firecrackerRuntime)
+	if !ok {
+		t.Fatalf("expected firecracker runtime, got %T", rtAny)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	rt.dialVSockFn = func(string, uint32, time.Duration) (net.Conn, error) {
+		return clientConn, nil
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		reader := bufio.NewReader(serverConn)
+		var req guestapi.ExecRequest
+		if err := json.NewDecoder(reader).Decode(&req); err != nil {
+			t.Errorf("decode ready request: %v", err)
+			return
+		}
+		if req.Type != guestapi.MessageTypeReady {
+			t.Errorf("unexpected request type: %s", req.Type)
+			return
+		}
+		if err := json.NewEncoder(serverConn).Encode(guestapi.ReadyResult{
+			Type:      guestapi.MessageTypeReady,
+			RequestID: req.RequestID,
+			Status:    "ready",
+		}); err != nil {
+			t.Errorf("encode ready result: %v", err)
+		}
+	}()
+
+	if err := rt.waitForGuestReady("sess_ready", firecrackerPaths{
+		vsockPath: filepath.Join(root, "firecracker.vsock"),
+	}); err != nil {
+		t.Fatalf("wait for guest ready: %v", err)
+	}
+
+	<-done
 }
 
 func TestPerformVSockHandshake(t *testing.T) {

@@ -116,6 +116,38 @@ func TestServerRejectsInvalidRequest(t *testing.T) {
 	}
 }
 
+func TestServerReady(t *testing.T) {
+	t.Helper()
+
+	server := &Server{execFn: defaultExec}
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	go func() {
+		_ = server.handleStream(context.Background(), serverConn)
+	}()
+
+	req := guestapi.ExecRequest{
+		Type:      guestapi.MessageTypeReady,
+		RequestID: "ready_1",
+	}
+	if err := json.NewEncoder(clientConn).Encode(req); err != nil {
+		t.Fatalf("encode ready request: %v", err)
+	}
+
+	var result guestapi.ReadyResult
+	if err := json.NewDecoder(clientConn).Decode(&result); err != nil {
+		t.Fatalf("decode ready response: %v", err)
+	}
+	if result.Type != guestapi.MessageTypeReady {
+		t.Fatalf("unexpected response type: %s", result.Type)
+	}
+	if result.Status != "ready" {
+		t.Fatalf("unexpected ready status: %s", result.Status)
+	}
+}
+
 func roundTrip(t *testing.T, conn net.Conn, req guestapi.ExecRequest, result *guestapi.ExecResult) {
 	t.Helper()
 

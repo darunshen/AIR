@@ -400,6 +400,7 @@ runtime/sessions/
 当前建议按下面顺序使用仓库：
 
 1. 先用 `local` provider 验证 `create -> exec -> delete`
-2. 再切换到 `firecracker` provider 验证 `create -> delete`
-3. 用 `console.log`、`config/*.json` 和集成测试确认 Firecracker 启动链路
-4. 等 guest agent 和 `vsock exec` 完成后，再把 `firecracker` provider 用于真实命令执行
+2. 运行 `scripts/fetch-firecracker-demo-assets.sh`
+3. 运行 `scripts/prepare-firecracker-rootfs.sh`
+4. 切到 `firecracker` provider 验证 `create -> exec -> delete`
+5. 用 `console.log`、`config/*.json` 和集成测试确认 Firecracker 启动链路

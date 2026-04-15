@@ -3,6 +3,7 @@ package guestapi
 const (
 	MessageTypeExec   = "exec"
 	MessageTypeResult = "result"
+	MessageTypeReady  = "ready"
 	DefaultVSockPort  = 10789
 )
 
@@ -11,6 +12,13 @@ type ExecRequest struct {
 	RequestID string `json:"request_id"`
 	Command   string `json:"command"`
 	Timeout   int    `json:"timeout"`
+}
+
+type ReadyResult struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
 }
 
 type ExecResult struct {
