@@ -1,13 +1,19 @@
 package vm
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/darunshen/AIR/internal/guestapi"
 )
 
 func TestFirecrackerStartStopWithFakeBinary(t *testing.T) {
@@ -236,6 +242,150 @@ func TestFirecrackerPreflightRequiresAssets(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFirecrackerExecOverVSockBridge(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	rtAny, err := NewWithConfig(Config{
+		Root:     root,
+		Provider: "firecracker",
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+
+	rt, ok := rtAny.(*firecrackerRuntime)
+	if !ok {
+		t.Fatalf("expected firecracker runtime, got %T", rtAny)
+	}
+
+	sessionID := "sess_exec"
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	rt.dialVSockFn = func(string, uint32, time.Duration) (net.Conn, error) {
+		return clientConn, nil
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		reader := bufio.NewReader(serverConn)
+		var req guestapi.ExecRequest
+		if err := json.NewDecoder(reader).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if req.Type != guestapi.MessageTypeExec {
+			t.Errorf("unexpected request type: %s", req.Type)
+			return
+		}
+		if req.Command != "echo hello" {
+			t.Errorf("unexpected command: %s", req.Command)
+			return
+		}
+
+		if err := json.NewEncoder(serverConn).Encode(guestapi.ExecResult{
+			Type:      guestapi.MessageTypeResult,
+			RequestID: req.RequestID,
+			Stdout:    "hello\n",
+			ExitCode:  0,
+		}); err != nil {
+			t.Errorf("encode result: %v", err)
+		}
+	}()
+
+	result, err := rt.Exec(sessionID, "echo hello", 3*time.Second)
+	if err != nil {
+		t.Fatalf("exec via vsock bridge: %v", err)
+	}
+	if strings.TrimSpace(result.Stdout) != "hello" {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("unexpected exit code: %d", result.ExitCode)
+	}
+
+	<-done
+}
+
+func TestFirecrackerExecReturnsGuestNotReady(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	rtAny, err := NewWithConfig(Config{
+		Root:     root,
+		Provider: "firecracker",
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+
+	rt, ok := rtAny.(*firecrackerRuntime)
+	if !ok {
+		t.Fatalf("expected firecracker runtime, got %T", rtAny)
+	}
+
+	_, err = rt.Exec("sess_missing", "echo hello", time.Second)
+	if !errors.Is(err, ErrGuestAgentNotReady) {
+		t.Fatalf("expected ErrGuestAgentNotReady, got %v", err)
+	}
+}
+
+func TestPerformVSockHandshake(t *testing.T) {
+	t.Helper()
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		reader := bufio.NewReader(serverConn)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Errorf("read handshake: %v", err)
+			return
+		}
+		if strings.TrimSpace(line) != "CONNECT 10789" {
+			t.Errorf("unexpected handshake: %q", line)
+			return
+		}
+		if _, err := serverConn.Write([]byte("OK\n")); err != nil {
+			t.Errorf("write handshake response: %v", err)
+			return
+		}
+
+		var req guestapi.ExecRequest
+		if err := json.NewDecoder(reader).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if req.Command != "echo ready" {
+			t.Errorf("unexpected command: %s", req.Command)
+			return
+		}
+	}()
+
+	conn, err := performVSockHandshake(clientConn, guestapi.DefaultVSockPort)
+	if err != nil {
+		t.Fatalf("perform handshake: %v", err)
+	}
+
+	if err := json.NewEncoder(conn).Encode(guestapi.ExecRequest{
+		Type:    guestapi.MessageTypeExec,
+		Command: "echo ready",
+	}); err != nil {
+		t.Fatalf("encode post-handshake request: %v", err)
+	}
+
+	<-done
 }
 
 func TestFirecrackerIntegrationLifecycle(t *testing.T) {

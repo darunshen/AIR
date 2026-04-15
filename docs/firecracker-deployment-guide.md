@@ -6,10 +6,9 @@
 
 - 启动前环境预检
 - `session create`
+- `session exec`
 - `session delete`
 - `TestFirecrackerIntegrationLifecycle`
-
-当前阶段不包含 guest agent，因此即使真机部署完成，`firecracker` provider 仍不能用于真实 `session exec`。
 
 ## 1. 适用范围
 
@@ -119,9 +118,8 @@ assets/firecracker/
 包括：
 
 - 官方 release 的 `firecracker`
-- Firecracker CI kernel `vmlinux-*`
-- Firecracker CI rootfs 源文件 `ubuntu-*.squashfs.upstream`
-- 转换后的 `ubuntu-*.ext4`
+- 官方 demo `hello-vmlinux.bin`
+- 官方 demo `hello-rootfs.ext4`
 
 ### 4.2 从源码构建
 
@@ -153,11 +151,13 @@ export AIR_FIRECRACKER_ROOTFS=/absolute/path/to/rootfs.ext4
 
 1. Firecracker 二进制先使用官方 release
 2. `vmlinux` / `rootfs.ext4` 先使用 Firecracker 官方 Getting Started 中引用的 demo 资产
+3. 再用仓库脚本把 `air-agent` 注入到 demo rootfs 中
 
 仓库脚本已经把这条路径固化好了：
 
 ```bash
 scripts/fetch-firecracker-demo-assets.sh
+scripts/prepare-firecracker-rootfs.sh
 ```
 
 脚本流程基于 Firecracker 官方 Getting Started，但省略了 SSH key 注入，因为 AIR 当前并不通过 SSH 进入 guest。
@@ -176,9 +176,11 @@ rootfs 需要满足：
 
 ### 5.2 当前阶段的建议
 
-当前仓库还没有内建 rootfs 构建流程，因此建议先用能成功启动 Firecracker 的最小实验镜像验证生命周期。
+当前仓库已经内建 demo rootfs 重打包流程。建议先用仓库脚本生成 `hello-rootfs-air.ext4`，优先验证：
 
-在 AIR 现阶段，只要能让 `Start()` 成功、并能看到串口日志，就足够验证宿主机链路。不要先把重点放在 SSH、网络或包管理器可用性上。
+- `session create`
+- `session exec`
+- `session delete`
 
 ### 5.3 目录约定
 
@@ -207,7 +209,7 @@ export AIR_KVM_DEVICE=/dev/kvm
 ```bash
 export AIR_FIRECRACKER_BIN="$(pwd)/assets/firecracker/firecracker"
 export AIR_FIRECRACKER_KERNEL="$(pwd)/assets/firecracker/hello-vmlinux.bin"
-export AIR_FIRECRACKER_ROOTFS="$(pwd)/assets/firecracker/hello-rootfs.ext4"
+export AIR_FIRECRACKER_ROOTFS="$(pwd)/assets/firecracker/hello-rootfs-air.ext4"
 export AIR_KVM_DEVICE=/dev/kvm
 ```
 

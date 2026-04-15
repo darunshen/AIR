@@ -33,21 +33,29 @@
   - `air session create --provider local`
   - `air session create --provider firecracker`
 
+- Guest Agent 与 `vsock exec` 已打通
+  - 已有 `cmd/air-agent`
+  - guest 侧已支持监听 `virtio-vsock`
+  - Host/Guest 协议已打通
+  - `internal/vm/firecracker.go` 的 `Exec()` 已替换为真实 `vsock` 通信
+  - 真机已验证 `session create -> exec -> delete`
+
+- Firecracker guest rootfs 注入链路已接入
+  - 仓库脚本：`scripts/prepare-firecracker-rootfs.sh`
+  - 会将 `air-agent` 打进 rootfs
+  - 会把 `local` service 接进 default runlevel
+  - 会生成可自动发现的 `assets/firecracker/hello-rootfs-air.ext4`
+
 ## P0: Guest Agent 与通信
 
-- 设计最小 `air-agent`
-  - guest 启动后自动运行
-  - 监听 `virtio-vsock`
-  - 接收 `exec` 请求
-  - 返回 `stdout/stderr/exit_code`
+- 增加更明确的 guest ready 判定
+  - 当前可从串口看到 `[air-agent] boot hook start`
+  - 后续可引入显式 ready 握手
 
-- 完成 Host/Guest `vsock` 协议
-  - 请求结构
-  - 响应结构
-  - 超时与错误语义
-  - request_id 关联机制
-
-- 将 `internal/vm/firecracker.go` 的 `Exec()` 从“guest 未就绪”错误替换为真实 `vsock` 通信
+- 补强 Host/Guest 协议
+  - request_id 的可观测性
+  - 版本兼容字段
+  - 更细的 transport / guest 错误分类
 
 ## P1: Runtime 集成
 
@@ -66,20 +74,15 @@
   - `vsock_id` deprecated 警告
   - 不同版本 API 路径和字段差异
 
-- 在成功启动后增加“guest ready”判定
-  - 先通过 console 日志判断
-  - 后续切换到 `air-agent` ready 信号
-
 ## P1: Rootfs 与镜像体系
 
 - 确定 guest rootfs 技术路线
-  - 先基于官方 demo rootfs 跑通启动
+  - 已先基于官方 demo rootfs 跑通启动与 `exec`
   - 再切到自维护 rootfs
-
-- 将 `air-agent`、必要 shell、基础工具打进 rootfs
 
 - 设计只读基础镜像 + 每 session 独立写层
 - 明确 overlay 方案与目录布局
+- 评估 rootfs 构建时如何保留 root ownership / device 节点
 
 ## P1: 可观测性
 
