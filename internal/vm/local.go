@@ -23,12 +23,17 @@ func (r *localRuntime) Start(sessionID string) (string, error) {
 	base := sessionRoot(r.root, sessionID)
 	workspace := filepath.Join(base, "workspace")
 	taskDir := filepath.Join(base, "task")
+	eventsPath := filepath.Join(base, "events.jsonl")
 
 	for _, dir := range []string{workspace, taskDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return "", err
 		}
 	}
+	_ = appendRuntimeEvent(eventsPath, "local", sessionID, "session_started", map[string]any{
+		"workspace_path": workspace,
+		"task_path":      taskDir,
+	})
 
 	return sessionID, nil
 }
@@ -37,15 +42,23 @@ func (r *localRuntime) Exec(sessionID, command string, timeout time.Duration) (*
 	base := sessionRoot(r.root, sessionID)
 	workspace := filepath.Join(base, "workspace")
 	taskDir := filepath.Join(base, "task")
+	eventsPath := filepath.Join(base, "events.jsonl")
 	cmdPath := filepath.Join(taskDir, "cmd.sh")
 	resultPath := filepath.Join(taskDir, "result.txt")
 	stderrPath := filepath.Join(taskDir, "stderr.txt")
+	requestID := fmt.Sprintf("%s-%d", sessionID, time.Now().UnixNano())
+	startedAt := time.Now()
 
 	if err := os.WriteFile(cmdPath, []byte(command+"\n"), 0o755); err != nil {
 		return nil, err
 	}
 	_ = os.Remove(resultPath)
 	_ = os.Remove(stderrPath)
+	_ = appendRuntimeEvent(eventsPath, "local", sessionID, "exec_started", map[string]any{
+		"request_id": requestID,
+		"command":    command,
+		"timeout_ms": timeout.Milliseconds(),
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -91,10 +104,20 @@ func (r *localRuntime) Exec(sessionID, command string, timeout time.Duration) (*
 		stderr.WriteString("command timed out\n")
 	}
 
+	duration := time.Since(startedAt)
+	_ = appendRuntimeEvent(eventsPath, "local", sessionID, "exec_completed", map[string]any{
+		"request_id":  requestID,
+		"command":     command,
+		"duration_ms": duration.Milliseconds(),
+		"exit_code":   exitCode,
+	})
+
 	return &ExecResult{
+		RequestID: requestID,
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
 		ExitCode: exitCode,
+		Duration: duration,
 	}, nil
 }
 
@@ -103,6 +126,7 @@ func (r *localRuntime) Stop(vmid string) error {
 	if _, err := os.Stat(base); err != nil {
 		return fmt.Errorf("runtime not found: %w", err)
 	}
+	_ = appendRuntimeEvent(filepath.Join(base, "events.jsonl"), "local", vmid, "session_stopped", nil)
 	return os.RemoveAll(base)
 }
 
@@ -125,5 +149,6 @@ func (r *localRuntime) Inspect(sessionID string) (*InspectInfo, error) {
 		Running:       exists,
 		WorkspacePath: workspace,
 		TaskPath:      taskDir,
+		EventsPath:    filepath.Join(base, "events.jsonl"),
 	}, nil
 }

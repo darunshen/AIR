@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -53,6 +55,7 @@ func main() {
 		if result.Stderr != "" {
 			fmt.Fprint(os.Stderr, result.Stderr)
 		}
+		fmt.Fprintf(os.Stderr, "request_id=%s duration_ms=%d\n", result.RequestID, result.Duration.Milliseconds())
 		if result.ExitCode != 0 {
 			os.Exit(result.ExitCode)
 		}
@@ -86,16 +89,54 @@ func main() {
 			os.Exit(1)
 		}
 		follow := false
+		tailLines := 0
 		for _, arg := range args[3:] {
 			if arg == "--follow" || arg == "-f" {
 				follow = true
+				continue
+			}
+			if strings.HasPrefix(arg, "--tail=") {
+				value := strings.TrimPrefix(arg, "--tail=")
+				parsed, err := strconv.Atoi(value)
+				if err != nil || parsed < 0 {
+					exitErr(errors.New("tail must be a non-negative integer"))
+				}
+				tailLines = parsed
 			}
 		}
 		path, err := manager.ConsolePath(args[2])
 		if err != nil {
 			exitErr(err)
 		}
-		if err := streamConsole(path, follow); err != nil {
+		if err := streamFile(path, follow, tailLines); err != nil {
+			exitErr(err)
+		}
+	case "events":
+		if len(args) < 3 {
+			usage()
+			os.Exit(1)
+		}
+		follow := false
+		tailLines := 50
+		for _, arg := range args[3:] {
+			if arg == "--follow" || arg == "-f" {
+				follow = true
+				continue
+			}
+			if strings.HasPrefix(arg, "--tail=") {
+				value := strings.TrimPrefix(arg, "--tail=")
+				parsed, err := strconv.Atoi(value)
+				if err != nil || parsed < 0 {
+					exitErr(errors.New("tail must be a non-negative integer"))
+				}
+				tailLines = parsed
+			}
+		}
+		path, err := manager.EventsPath(args[2])
+		if err != nil {
+			exitErr(err)
+		}
+		if err := streamFile(path, follow, tailLines); err != nil {
 			exitErr(err)
 		}
 	default:
@@ -109,7 +150,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker]")
 	fmt.Fprintln(os.Stderr, "  air session list")
 	fmt.Fprintln(os.Stderr, "  air session inspect <id>")
-	fmt.Fprintln(os.Stderr, "  air session console <id> [--follow]")
+	fmt.Fprintln(os.Stderr, "  air session console <id> [--follow] [--tail=N]")
+	fmt.Fprintln(os.Stderr, "  air session events <id> [--follow] [--tail=N]")
 	fmt.Fprintln(os.Stderr, "  air session exec <id> \"<command>\"")
 	fmt.Fprintln(os.Stderr, "  air session delete <id>")
 }
@@ -142,8 +184,12 @@ func printJSON(v any) {
 	fmt.Println(string(body))
 }
 
-func streamConsole(path string, follow bool) error {
+func streamFile(path string, follow bool, tailLines int) error {
 	if !follow {
+		if tailLines > 0 {
+			_, err := copyTailLines(path, tailLines, os.Stdout)
+			return err
+		}
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -156,8 +202,15 @@ func streamConsole(path string, follow bool) error {
 	defer stop()
 
 	var offset int64
+	if tailLines > 0 {
+		nextOffset, err := copyTailLines(path, tailLines, os.Stdout)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		offset = nextOffset
+	}
 	for {
-		nextOffset, err := copyConsoleDelta(path, offset, os.Stdout)
+		nextOffset, err := copyFileDelta(path, offset, os.Stdout)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				select {
@@ -179,7 +232,7 @@ func streamConsole(path string, follow bool) error {
 	}
 }
 
-func copyConsoleDelta(path string, offset int64, dst io.Writer) (int64, error) {
+func copyFileDelta(path string, offset int64, dst io.Writer) (int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return offset, err
@@ -203,6 +256,38 @@ func copyConsoleDelta(path string, offset int64, dst io.Writer) (int64, error) {
 		return offset, err
 	}
 	return offset + n, nil
+}
+
+func copyTailLines(path string, lines int, dst io.Writer) (int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	body, err := io.ReadAll(file)
+	if err != nil {
+		return 0, err
+	}
+	if lines <= 0 {
+		return int64(len(body)), nil
+	}
+	all := strings.Split(string(body), "\n")
+	if len(all) > 0 && all[len(all)-1] == "" {
+		all = all[:len(all)-1]
+	}
+	start := 0
+	if len(all) > lines {
+		start = len(all) - lines
+	}
+	content := strings.Join(all[start:], "\n")
+	if content != "" {
+		content += "\n"
+	}
+	if _, err := io.WriteString(dst, content); err != nil {
+		return 0, err
+	}
+	return int64(len(body)), nil
 }
 
 func parseProviderFlag(args []string) (string, error) {

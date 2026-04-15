@@ -25,6 +25,8 @@
   - `air session inspect <id>`
   - `air session console <id>`
   - `air session console <id> --follow`
+  - `air session events <id>`
+  - `air session events <id> --follow`
   - runtime inspect 已返回 provider、pid、console、socket、vsock、config 等路径
   - `list` / `inspect` 会按 runtime 实况刷新 session 状态
   - 旧 session 缺失 `provider` 时可自动补全
@@ -46,6 +48,17 @@
   - 会把 `local` service 接进 default runlevel
   - 会生成可自动发现的 `assets/firecracker/hello-rootfs-air.ext4`
 
+- Firecracker 每 session 独立可写根盘已接入
+  - 启动时会从基础 rootfs 复制出 `overlay.ext4`
+  - Firecracker 实际挂载的是 session 自己的 `overlay.ext4`
+  - session 删除时会一起清理
+
+- 可观测性已补到运行链路
+  - 已记录 session 生命周期事件
+  - 已记录 exec `request_id`
+  - 已记录 exec 耗时
+  - 事件日志落到 `events.jsonl`
+
 ## P0: Guest Agent 与通信
 
 - guest ready 判定已接入
@@ -53,7 +66,6 @@
   - 串口里仍可看到 `[air-agent] boot hook start`
 
 - 补强 Host/Guest 协议
-  - request_id 的可观测性
   - 版本兼容字段
   - 更细的 transport / guest 错误分类
 
@@ -80,25 +92,26 @@
   - 已先基于官方 demo rootfs 跑通启动与 `exec`
   - 再切到自维护 rootfs
 
-- 设计只读基础镜像 + 每 session 独立写层
+- 将当前“复制基础 rootfs 到 `overlay.ext4`”演进为真正的 COW overlay
 - 明确 overlay 方案与目录布局
 - 评估 rootfs 构建时如何保留 root ownership / device 节点
 
 ## P1: 可观测性
 
 - 记录启动失败原因到更清晰的错误链
-- 记录 exec 耗时
-- 记录 session 生命周期事件
+- 增加事件等级与分类
+- 增加更完整的 exec 失败细节
 
 ## P1: 测试
 
 - 扩大 Firecracker 集成测试覆盖
   - 校验 `console.log` 非空
+  - 校验 session overlay 生效
+  - 校验事件日志包含 ready / exec
   - 校验真实 `delete` 后目录清理
   - 校验 demo 资产自动发现路径
 
 - 增加 guest agent 通信测试
-- 增加 `session -> firecracker runtime -> exec -> delete` 端到端测试
 
 ## P2: CLI 与产品能力
 
@@ -108,7 +121,7 @@
 - 将 `air session console` 从日志查看升级为更强的调试入口
   - 明确串口 attach 方案
   - 评估可交互控制台能力
-  - 区分“console 查看”与“guest exec”
+  - 增加按事件类型筛选
 
 ## P2: 生命周期与回收
 

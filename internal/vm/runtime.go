@@ -14,9 +14,11 @@ type Runtime interface {
 }
 
 type ExecResult struct {
+	RequestID  string
 	Stdout   string
 	Stderr   string
 	ExitCode int
+	Duration  time.Duration
 }
 
 type InspectInfo struct {
@@ -34,6 +36,8 @@ type InspectInfo struct {
 	VSockPath     string `json:"vsock_path,omitempty"`
 	MetricsPath   string `json:"metrics_path,omitempty"`
 	ConfigPath    string `json:"config_path,omitempty"`
+	EventsPath    string `json:"events_path,omitempty"`
+	OverlayPath   string `json:"overlay_path,omitempty"`
 }
 
 type Config struct {
