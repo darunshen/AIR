@@ -260,7 +260,8 @@ Current implementation note:
 - `session create / exec / delete` is being built first
 - The `vm` layer now supports a configurable provider with `local` as the default and `firecracker` as the experimental VM-backed path
 - Firecracker bootstrapping, guest `air-agent`, and host/guest `vsock exec` are wired end to end
-- `air session list` / `inspect` / `console` are available for basic debugging
+- Firecracker now uses a per-session writable rootfs image copied from the configured base rootfs
+- `air session list` / `inspect` / `console` / `events` are available for basic debugging
 - `scripts/prepare-firecracker-rootfs.sh` rebuilds the demo rootfs with `air-agent` baked in and enabled through OpenRC `local.d`
 
 Runtime configuration:
@@ -279,9 +280,11 @@ Startup shortcut:
 
 Firecracker runtime layout:
 
+- `runtime/sessions/firecracker/<session_id>/overlay.ext4`
 - `runtime/sessions/firecracker/<session_id>/firecracker.sock`
 - `runtime/sessions/firecracker/<session_id>/firecracker.pid`
 - `runtime/sessions/firecracker/<session_id>/console.log`
+- `runtime/sessions/firecracker/<session_id>/events.jsonl`
 - `runtime/sessions/firecracker/<session_id>/metrics.log`
 - `runtime/sessions/firecracker/<session_id>/firecracker.vsock`
 - `runtime/sessions/firecracker/<session_id>/config/*.json`
@@ -289,18 +292,22 @@ Firecracker runtime layout:
 Real-environment lifecycle test:
 
 - `AIR_FIRECRACKER_INTEGRATION=1 go test ./internal/vm -run TestFirecrackerIntegrationLifecycle`
+- The test validates `start -> exec -> stop`, non-empty console output, and session overlay wiring
 - The test is skipped unless Linux, `/dev/kvm`, Firecracker, kernel, and rootfs are all available
 
 Debugging commands:
 
 - `air session list`
 - `air session inspect <id>`
-- `air session console <id>`
-- `air session console <id> --follow`
+- `air session console <id> [--tail=N]`
+- `air session console <id> --follow [--tail=N]`
+- `air session events <id> [--tail=N]`
+- `air session events <id> --follow [--tail=N]`
 
 Current console limitation:
 
 - `air session console` currently shows the serial console log file
+- `air session events` shows structured lifecycle / exec events including `request_id` and duration
 - It is useful for boot diagnostics, but it is not an interactive guest shell yet
 
 Current status behavior:

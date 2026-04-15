@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -68,6 +69,8 @@ type firecrackerPaths struct {
 	socketPath        string
 	consolePath       string
 	metricsPath       string
+	eventsPath        string
+	overlayPath       string
 	pidPath           string
 	vsockPath         string
 	configDir         string
@@ -103,6 +106,11 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 
 	_ = os.Remove(paths.socketPath)
 	_ = os.Remove(paths.vsockPath)
+	_ = os.Remove(paths.overlayPath)
+
+	if err := copyFile(paths.overlayPath, r.rootfsImage); err != nil {
+		return "", fmt.Errorf("prepare firecracker session overlay: %w", err)
+	}
 
 	consoleFile, err := os.OpenFile(paths.consolePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -113,6 +121,14 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 	if err := touchFile(paths.metricsPath); err != nil {
 		return "", err
 	}
+	if err := touchFile(paths.eventsPath); err != nil {
+		return "", err
+	}
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "session_starting", map[string]any{
+		"base_rootfs_path": r.rootfsImage,
+		"overlay_path":     paths.overlayPath,
+		"kernel_path":      r.kernelImage,
+	})
 
 	payloads := r.payloads(sessionID, paths)
 	if err := r.writeConfigSnapshot(paths, payloads); err != nil {
@@ -133,6 +149,9 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 		_ = cmd.Process.Kill()
 		return "", err
 	}
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "firecracker_started", map[string]any{
+		"pid": cmd.Process.Pid,
+	})
 
 	waitErrCh := make(chan error, 1)
 	go func() {
@@ -186,9 +205,15 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 	}
 
 	if err := r.waitForGuestReady(sessionID, paths); err != nil {
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "guest_ready_failed", map[string]any{
+			"error": err.Error(),
+		})
 		_ = cmd.Process.Kill()
 		return "", err
 	}
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "guest_ready", map[string]any{
+		"vsock_path": paths.vsockPath,
+	})
 
 	return sessionID, nil
 }
@@ -198,6 +223,13 @@ func (r *firecrackerRuntime) Exec(sessionID, command string, timeout time.Durati
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	requestID := fmt.Sprintf("%s-%d", sessionID, time.Now().UnixNano())
+	startedAt := time.Now()
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "exec_started", map[string]any{
+		"request_id": requestID,
+		"command":    command,
+		"timeout_ms": timeout.Milliseconds(),
+	})
 
 	readyDeadline := timeout
 	if readyDeadline > 5*time.Second {
@@ -211,6 +243,11 @@ func (r *firecrackerRuntime) Exec(sessionID, command string, timeout time.Durati
 
 	conn, err := dialVSockFn(paths.vsockPath, guestapi.DefaultVSockPort, readyDeadline)
 	if err != nil {
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "exec_failed", map[string]any{
+			"request_id": requestID,
+			"command":    command,
+			"error":      err.Error(),
+		})
 		return nil, errGuestAgentTransport(sessionID, paths.vsockPath, err)
 	}
 	defer conn.Close()
@@ -221,17 +258,27 @@ func (r *firecrackerRuntime) Exec(sessionID, command string, timeout time.Durati
 
 	req := guestapi.ExecRequest{
 		Type:      guestapi.MessageTypeExec,
-		RequestID: fmt.Sprintf("%s-%d", sessionID, time.Now().UnixNano()),
+		RequestID: requestID,
 		Command:   command,
 		Timeout:   durationSeconds(timeout),
 	}
 
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "exec_failed", map[string]any{
+			"request_id": requestID,
+			"command":    command,
+			"error":      err.Error(),
+		})
 		return nil, err
 	}
 
 	var result guestapi.ExecResult
 	if err := json.NewDecoder(conn).Decode(&result); err != nil {
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "exec_failed", map[string]any{
+			"request_id": requestID,
+			"command":    command,
+			"error":      err.Error(),
+		})
 		return nil, err
 	}
 
@@ -246,15 +293,26 @@ func (r *firecrackerRuntime) Exec(sessionID, command string, timeout time.Durati
 		}
 	}
 
+	duration := time.Since(startedAt)
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "exec_completed", map[string]any{
+		"request_id":  requestID,
+		"command":     command,
+		"duration_ms": duration.Milliseconds(),
+		"exit_code":   result.ExitCode,
+	})
+
 	return &ExecResult{
+		RequestID: requestID,
 		Stdout:   result.Stdout,
 		Stderr:   stderr,
 		ExitCode: result.ExitCode,
+		Duration: duration,
 	}, nil
 }
 
 func (r *firecrackerRuntime) Stop(vmid string) error {
 	paths := r.paths(vmid)
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", vmid, "session_stopping", nil)
 
 	pidRaw, err := os.ReadFile(paths.pidPath)
 	if err != nil {
@@ -278,6 +336,9 @@ func (r *firecrackerRuntime) Stop(vmid string) error {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", vmid, "session_stopped", map[string]any{
+		"pid": pid,
+	})
 
 	return os.RemoveAll(paths.base)
 }
@@ -302,6 +363,8 @@ func (r *firecrackerRuntime) Inspect(sessionID string) (*InspectInfo, error) {
 		VSockPath:   paths.vsockPath,
 		MetricsPath: paths.metricsPath,
 		ConfigPath:  paths.configDir,
+		EventsPath:  paths.eventsPath,
+		OverlayPath: paths.overlayPath,
 	}
 
 	pidRaw, err := os.ReadFile(paths.pidPath)
@@ -420,6 +483,8 @@ func (r *firecrackerRuntime) paths(sessionID string) firecrackerPaths {
 		socketPath:        filepath.Join(base, "firecracker.sock"),
 		consolePath:       filepath.Join(base, "console.log"),
 		metricsPath:       filepath.Join(base, "metrics.log"),
+		eventsPath:        filepath.Join(base, "events.jsonl"),
+		overlayPath:       filepath.Join(base, "overlay.ext4"),
 		pidPath:           filepath.Join(base, "firecracker.pid"),
 		vsockPath:         filepath.Join(base, "firecracker.vsock"),
 		configDir:         configDir,
@@ -450,7 +515,7 @@ func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) 
 		},
 		rootfsDrive: firecrackerDrive{
 			DriveID:      "rootfs",
-			PathOnHost:   r.rootfsImage,
+			PathOnHost:   paths.overlayPath,
 			IsRootDevice: true,
 			IsReadOnly:   false,
 		},
@@ -491,6 +556,30 @@ func writeJSONFile(path string, payload any) error {
 	}
 	body = append(body, '\n')
 	return os.WriteFile(path, body, 0o644)
+}
+
+func copyFile(dst, src string) error {
+	source, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
+	info, err := source.Stat()
+	if err != nil {
+		return err
+	}
+
+	target, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return err
+	}
+	defer target.Close()
+
+	if _, err := io.Copy(target, source); err != nil {
+		return err
+	}
+	return target.Sync()
 }
 
 func (r *firecrackerRuntime) waitForGuestReady(sessionID string, paths firecrackerPaths) error {

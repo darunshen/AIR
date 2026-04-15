@@ -117,10 +117,12 @@ while true; do sleep 1; done
 
 	base := filepath.Join(root, "runtime", "firecracker", "sess_firecracker")
 	for _, path := range []string{
+		filepath.Join(base, "overlay.ext4"),
 		filepath.Join(base, "firecracker.sock"),
 		filepath.Join(base, "firecracker.pid"),
 		filepath.Join(base, "console.log"),
 		filepath.Join(base, "metrics.log"),
+		filepath.Join(base, "events.jsonl"),
 		filepath.Join(base, "config", "machine-config.json"),
 		filepath.Join(base, "config", "boot-source.json"),
 		filepath.Join(base, "config", "rootfs-drive.json"),
@@ -143,6 +145,30 @@ while true; do sleep 1; done
 	}
 	if info.ConsolePath == "" || info.SocketPath == "" || info.PIDPath == "" || info.ConfigPath == "" {
 		t.Fatalf("expected populated firecracker inspect info, got %+v", info)
+	}
+	if info.OverlayPath != filepath.Join(base, "overlay.ext4") {
+		t.Fatalf("unexpected overlay path: %s", info.OverlayPath)
+	}
+	if info.EventsPath != filepath.Join(base, "events.jsonl") {
+		t.Fatalf("unexpected events path: %s", info.EventsPath)
+	}
+
+	rootfsConfigBody, err := os.ReadFile(filepath.Join(base, "config", "rootfs-drive.json"))
+	if err != nil {
+		t.Fatalf("read rootfs config: %v", err)
+	}
+	if !strings.Contains(string(rootfsConfigBody), filepath.Join(base, "overlay.ext4")) {
+		t.Fatalf("expected rootfs config to point to overlay, got %s", string(rootfsConfigBody))
+	}
+
+	eventsBody, err := os.ReadFile(filepath.Join(base, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events log: %v", err)
+	}
+	for _, marker := range []string{"session_starting", "firecracker_started", "guest_ready"} {
+		if !strings.Contains(string(eventsBody), marker) {
+			t.Fatalf("expected events log to contain %q, got %s", marker, string(eventsBody))
+		}
 	}
 
 	if err := rt.Stop(vmid); err != nil {
@@ -323,11 +349,25 @@ func TestFirecrackerExecOverVSockBridge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exec via vsock bridge: %v", err)
 	}
+	if result.RequestID == "" {
+		t.Fatal("expected request id")
+	}
+	if result.Duration <= 0 {
+		t.Fatalf("expected positive duration, got %s", result.Duration)
+	}
 	if strings.TrimSpace(result.Stdout) != "hello" {
 		t.Fatalf("unexpected stdout: %q", result.Stdout)
 	}
 	if result.ExitCode != 0 {
 		t.Fatalf("unexpected exit code: %d", result.ExitCode)
+	}
+
+	eventsBody, err := os.ReadFile(filepath.Join(root, "firecracker", sessionID, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events log: %v", err)
+	}
+	if !strings.Contains(string(eventsBody), "exec_completed") || !strings.Contains(string(eventsBody), result.RequestID) {
+		t.Fatalf("expected exec event in events log, got %s", string(eventsBody))
 	}
 
 	<-done
@@ -517,9 +557,46 @@ func TestFirecrackerIntegrationLifecycle(t *testing.T) {
 	}()
 
 	paths := rt.paths(vmid)
-	for _, path := range []string{paths.pidPath, paths.socketPath, paths.consolePath, paths.metricsPath} {
+	for _, path := range []string{paths.pidPath, paths.socketPath, paths.consolePath, paths.metricsPath, paths.eventsPath, paths.overlayPath} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected artifact %s: %v", path, err)
+		}
+	}
+	if paths.overlayPath == rootfs {
+		t.Fatalf("expected session overlay path, got shared rootfs path %s", paths.overlayPath)
+	}
+
+	first, err := rt.Exec(vmid, "echo integration > /root/air-session.txt", 10*time.Second)
+	if err != nil {
+		t.Fatalf("exec write integration file: %v", err)
+	}
+	if first.RequestID == "" {
+		t.Fatal("expected request id from first exec")
+	}
+
+	second, err := rt.Exec(vmid, "cat /root/air-session.txt", 10*time.Second)
+	if err != nil {
+		t.Fatalf("exec read integration file: %v", err)
+	}
+	if strings.TrimSpace(second.Stdout) != "integration" {
+		t.Fatalf("unexpected exec stdout: %q", second.Stdout)
+	}
+
+	consoleBody, err := os.ReadFile(paths.consolePath)
+	if err != nil {
+		t.Fatalf("read console log: %v", err)
+	}
+	if len(consoleBody) == 0 {
+		t.Fatal("expected non-empty console log")
+	}
+
+	eventsBody, err := os.ReadFile(paths.eventsPath)
+	if err != nil {
+		t.Fatalf("read events log: %v", err)
+	}
+	for _, marker := range []string{"guest_ready", "exec_started", "exec_completed"} {
+		if !strings.Contains(string(eventsBody), marker) {
+			t.Fatalf("expected %q in events log, got %s", marker, string(eventsBody))
 		}
 	}
 }

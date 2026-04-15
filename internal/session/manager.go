@@ -12,9 +12,11 @@ import (
 )
 
 type ExecResult struct {
+	RequestID string
 	Stdout   string
 	Stderr   string
 	ExitCode int
+	Duration time.Duration
 }
 
 type Manager struct {
@@ -123,9 +125,11 @@ func (m *Manager) Exec(sessionID, command string) (*ExecResult, error) {
 	}
 
 	return &ExecResult{
+		RequestID: result.RequestID,
 		Stdout:   result.Stdout,
 		Stderr:   result.Stderr,
 		ExitCode: result.ExitCode,
+		Duration: result.Duration,
 	}, nil
 }
 
@@ -216,6 +220,17 @@ func (m *Manager) ConsolePath(sessionID string) (string, error) {
 		return "", errors.New("session provider does not expose a console log")
 	}
 	return inspect.Runtime.ConsolePath, nil
+}
+
+func (m *Manager) EventsPath(sessionID string) (string, error) {
+	inspect, err := m.Inspect(sessionID)
+	if err != nil {
+		return "", err
+	}
+	if inspect.Runtime.EventsPath == "" {
+		return "", errors.New("session provider does not expose an events log")
+	}
+	return inspect.Runtime.EventsPath, nil
 }
 
 func (m *Manager) runtimeForSession(s *model.Session) (vm.Runtime, error) {

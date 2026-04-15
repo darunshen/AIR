@@ -39,6 +39,8 @@
 - 用 `air session inspect <id>` 查看 session 与 runtime 状态
 - 用 `air session console <id>` 查看串口日志
 - 用 `air session console <id> --follow` 持续跟随串口日志
+- 用 `air session events <id>` 查看结构化事件日志
+- 用 `air session events <id> --follow` 跟随生命周期和 exec 事件
 
 注意：
 
@@ -141,6 +143,9 @@ go run ./cmd/air session inspect <session_id>
 ```bash
 go run ./cmd/air session console <session_id>
 go run ./cmd/air session console <session_id> --follow
+go run ./cmd/air session console <session_id> --tail=100
+go run ./cmd/air session events <session_id>
+go run ./cmd/air session events <session_id> --follow
 ```
 
 ## 5. Firecracker 模式操作
@@ -256,10 +261,12 @@ runtime/sessions/local/<session_id>/
 
 ```text
 runtime/sessions/firecracker/<session_id>/
+  overlay.ext4
   firecracker.sock
   firecracker.pid
   firecracker.vsock
   console.log
+  events.jsonl
   metrics.log
   config/
     machine-config.json
@@ -270,10 +277,12 @@ runtime/sessions/firecracker/<session_id>/
 
 说明：
 
+- `overlay.ext4`：从基础 rootfs 复制出的每 session 独立可写根盘
 - `firecracker.sock`：Host 访问 Firecracker API 的 Unix socket
 - `firecracker.pid`：Firecracker 进程 PID
 - `firecracker.vsock`：预留给 Host/Guest `vsock` 通信的 Unix socket 路径
 - `console.log`：串口输出日志
+- `events.jsonl`：结构化生命周期 / exec 事件日志
 - `metrics.log`：当前仅预创建，后续用于 Firecracker metrics
 - `config/*.json`：启动时实际下发的配置快照
 
@@ -282,6 +291,8 @@ runtime/sessions/firecracker/<session_id>/
 仓库内已经提供一个默认跳过的集成测试，用于验证：
 
 - `Start()` 能启动 Firecracker
+- `Exec()` 能通过 `vsock` 真实执行命令
+- 每 session 独立 `overlay.ext4` 生效
 - `Stop()` 能正常清理
 - 运行目录产物完整
 
