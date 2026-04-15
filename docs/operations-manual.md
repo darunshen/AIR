@@ -91,6 +91,8 @@ go build ./cmd/air
 
 ```bash
 go run ./cmd/air session create
+go run ./cmd/air session create --provider local
+go run ./cmd/air session create --provider firecracker
 ```
 
 ## 4. 本地模式操作
@@ -193,6 +195,12 @@ go run ./cmd/air session create
 - 创建 API socket
 - 写入 machine、boot、drive、vsock 配置
 - 启动 microVM
+
+如果你不想依赖当前 shell 的默认 provider，也可以显式指定：
+
+```bash
+go run ./cmd/air session create --provider firecracker
+```
 
 ### 5.3 当前限制
 

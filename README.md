@@ -47,6 +47,8 @@ Create VM -> Load environment -> Execute -> Return output -> Destroy VM
 
 ```bash
 air session create
+air session create --provider local
+air session create --provider firecracker
 air session list
 air session inspect <id>
 air session console <id> --follow
@@ -167,6 +169,8 @@ air run hello.py
 
 ```bash
 air session create
+air session create --provider local
+air session create --provider firecracker
 air session list
 air session inspect <id>
 air session console <id> --follow
@@ -270,6 +274,7 @@ Startup shortcut:
 
 - After running `scripts/fetch-firecracker-demo-assets.sh`, you can usually start the Firecracker provider from the repository root with only `AIR_VM_RUNTIME=firecracker`
 - If `assets/firecracker/firecracker`, `assets/firecracker/hello-vmlinux.bin`, and `assets/firecracker/hello-rootfs.ext4` exist, AIR will auto-discover them
+- You can also bypass the default provider and create a session explicitly with `air session create --provider firecracker`
 
 Firecracker runtime layout:
 

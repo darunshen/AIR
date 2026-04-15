@@ -29,7 +29,11 @@ func main() {
 
 	switch args[1] {
 	case "create":
-		s, err := manager.Create()
+		provider, err := parseProviderFlag(args[2:])
+		if err != nil {
+			exitErr(err)
+		}
+		s, err := manager.CreateWithProvider(provider)
 		if err != nil {
 			exitErr(err)
 		}
@@ -102,7 +106,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
-	fmt.Fprintln(os.Stderr, "  air session create")
+	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker]")
 	fmt.Fprintln(os.Stderr, "  air session list")
 	fmt.Fprintln(os.Stderr, "  air session inspect <id>")
 	fmt.Fprintln(os.Stderr, "  air session console <id> [--follow]")
@@ -199,4 +203,17 @@ func copyConsoleDelta(path string, offset int64, dst io.Writer) (int64, error) {
 		return offset, err
 	}
 	return offset + n, nil
+}
+
+func parseProviderFlag(args []string) (string, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
+	if len(args) != 2 || args[0] != "--provider" {
+		return "", errors.New("usage: air session create [--provider local|firecracker]")
+	}
+	if args[1] == "" {
+		return "", errors.New("provider must not be empty")
+	}
+	return args[1], nil
 }
