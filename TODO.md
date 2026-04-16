@@ -82,6 +82,31 @@
   - Anthropic / Gemini 作为后续 provider
   - 已新增 `.env.example` 作为环境模板
 
+- OpenAI planner 第一版已接入
+  - 已新增 `internal/llm`
+  - 已有 `llm.Provider` 抽象
+  - 已实现 OpenAI Responses API adapter
+  - `examples/agent-runner` 已可通过真实 OpenAI planner 决定下一步命令
+  - `scripted` planner 仍保留作离线回归 fallback
+
+- DeepSeek planner 第一版已接入
+  - 已实现 DeepSeek Chat Completions adapter
+  - `examples/agent-runner` 已可通过真实 DeepSeek planner 决定下一步命令
+  - 已验证 `run-smoke`
+  - 已验证 `session-workflow`
+
+- AI agent 使用说明已补齐
+  - 已新增 `docs/ai-agent-usage.md`
+  - 已说明 planner / runner / AIR 三层关系
+  - 已说明 OpenAI / DeepSeek / scripted 使用方式
+  - 已说明 one-shot / session / recovery / test-and-fix 的调用方式
+
+- `test-and-fix` 工作流已接入
+  - reference agent 已支持 `test-and-fix`
+  - scripted planner 已验证通过
+  - DeepSeek planner 已验证通过
+  - finish 后会做一次额外测试校验
+
 ## Priority Rule
 
 - 优先级判断标准调整为：先打通 AI agent 真实工作流，再补底层工程化
@@ -170,17 +195,18 @@
     - 文档中明确每类失败的判定方式
 
 - 继续补强 `examples/agent-runner`
-  - 当前已有固定策略版 reference agent
+  - 当前已有 OpenAI planner 版 reference agent
   - 下一步重点：
-    - 增加“运行测试并根据结果继续修复”的任务
-    - 增加外部 LLM 接入适配层
+    - 增加 prompt / model 升级策略
     - 用它持续反向校验 `air run`、session API、错误结构、timeout、事件日志是否足够
 
 - 增加 OpenAI planner 接入
-  - 先定义 `llm.Provider` 抽象
-  - 先实现 OpenAI Responses API adapter
-  - 让 `examples/agent-runner` 支持真实 LLM 规划下一步命令
-  - 第一版只做单 agent planner，不做多 agent 编排
+  - 已完成第一版
+  - 下一步：
+    - 增加更复杂的 task prompt
+    - 增加 planner 失败重试与模型升级策略
+    - 评估是否接 Anthropic / Gemini
+    - 第一版仍只做单 agent planner，不做多 agent 编排
 
 - 增加一套 agent workflow 验收用例
   - 实现方式：
