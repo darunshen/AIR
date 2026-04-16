@@ -148,6 +148,7 @@ func defaultExec(ctx context.Context, command string) (*guestapi.ExecResult, err
 		result.ExitCode = exitErr.ExitCode()
 		if ctx.Err() == context.DeadlineExceeded {
 			result.ExitCode = 124
+			result.TimedOut = true
 			if result.Stderr == "" {
 				result.Stderr = "command timed out\n"
 			}
@@ -157,6 +158,7 @@ func defaultExec(ctx context.Context, command string) (*guestapi.ExecResult, err
 
 	if ctx.Err() == context.DeadlineExceeded {
 		result.ExitCode = 124
+		result.TimedOut = true
 		if result.Stderr == "" {
 			result.Stderr = "command timed out\n"
 		}

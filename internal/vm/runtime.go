@@ -14,10 +14,11 @@ type Runtime interface {
 }
 
 type ExecResult struct {
-	RequestID  string
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	RequestID string
+	Stdout    string
+	Stderr    string
+	ExitCode  int
+	TimedOut  bool
 	Duration  time.Duration
 }
 

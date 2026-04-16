@@ -111,6 +111,7 @@ Hypervisor + Guest Agent + Rootfs
 - [Data Model](docs/data-model.md)
 - [Virtualization Selection](docs/virtualization-selection.md)
 - [VM Runtime Design](docs/vm-runtime-design.md)
+- [AI Agent Selection](docs/agent-selection.md)
 - [Firecracker Deployment Guide](docs/firecracker-deployment-guide.md)
 - [Operations Manual](docs/operations-manual.md)
 - [Repository Guidelines](AGENTS.md)
@@ -233,6 +234,7 @@ Hypervisor + Guest Agent + Rootfs
 - [数据模型](docs/data-model.md)
 - [虚拟化技术选型](docs/virtualization-selection.md)
 - [VM Runtime 设计](docs/vm-runtime-design.md)
+- [AI Agent 选型](docs/agent-selection.md)
 - [Firecracker 真机部署指南](docs/firecracker-deployment-guide.md)
 - [操作手册](docs/operations-manual.md)
 - [仓库协作指南](AGENTS.md)
@@ -257,11 +259,14 @@ AIR is in the early design and bootstrap stage. The current focus is turning the
 Current implementation note:
 
 - Phase 1 has started with a minimal Go CLI skeleton
-- `session create / exec / delete` is being built first
+- `air run` and `session create / exec / delete` are now available as the first executable workflow
 - The `vm` layer now supports a configurable provider with `local` as the default and `firecracker` as the experimental VM-backed path
 - Firecracker bootstrapping, guest `air-agent`, and host/guest `vsock exec` are wired end to end
 - Firecracker now uses a per-session writable rootfs image copied from the configured base rootfs
 - `air session list` / `inspect` / `console` / `events` are available for basic debugging
+- `air run` supports `--provider`, `--timeout`, and structured JSON output for agent consumption
+- `examples/agent-runner` provides a fixed-strategy reference agent that exercises one-shot runs, stateful sessions, and failure recovery
+- `docs/agent-selection.md` now records the first external LLM integration decision and environment template
 - `scripts/prepare-firecracker-rootfs.sh` rebuilds the demo rootfs with `air-agent` baked in and enabled through OpenRC `local.d`
 
 Runtime configuration:
@@ -297,6 +302,8 @@ Real-environment lifecycle test:
 
 Debugging commands:
 
+- `air run [--provider ...] [--timeout 30s] -- <command>`
+- `go run ./examples/agent-runner --task all`
 - `air session list`
 - `air session inspect <id>`
 - `air session console <id> [--tail=N]`

@@ -27,5 +27,6 @@ type ExecResult struct {
 	Stdout    string `json:"stdout"`
 	Stderr    string `json:"stderr"`
 	ExitCode  int    `json:"exit_code"`
+	TimedOut  bool   `json:"timed_out,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
