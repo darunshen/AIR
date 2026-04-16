@@ -114,10 +114,11 @@ func (r *localRuntime) Exec(sessionID, command string, timeout time.Duration) (*
 
 	return &ExecResult{
 		RequestID: requestID,
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		ExitCode: exitCode,
-		Duration: duration,
+		Stdout:    stdout.String(),
+		Stderr:    stderr.String(),
+		ExitCode:  exitCode,
+		TimedOut:  timedOut,
+		Duration:  duration,
 	}, nil
 }
 

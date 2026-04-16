@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSessionLifecycle(t *testing.T) {
@@ -245,5 +246,83 @@ func TestCreateWithExplicitProvider(t *testing.T) {
 	}
 	if s.Provider != "local" {
 		t.Fatalf("expected local provider, got %q", s.Provider)
+	}
+}
+
+func TestRunCreatesExecutesAndCleansUp(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	result, err := manager.Run("printf hello", RunOptions{})
+	if err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+	if result.Provider != "local" {
+		t.Fatalf("expected local provider, got %q", result.Provider)
+	}
+	if result.SessionID == "" {
+		t.Fatal("expected session id in run result")
+	}
+	if strings.TrimSpace(result.Stdout) != "hello" {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", result.ExitCode)
+	}
+	if result.ErrorType != "" {
+		t.Fatalf("expected empty error type, got %q", result.ErrorType)
+	}
+
+	items, err := manager.List()
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no remaining sessions after run, got %d", len(items))
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "runtime", "sessions", "local", result.SessionID)); !os.IsNotExist(err) {
+		t.Fatalf("expected runtime directory removed, stat err=%v", err)
+	}
+}
+
+func TestRunTimeoutReturnsStructuredResult(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	result, err := manager.Run("sleep 1", RunOptions{Timeout: 100 * time.Millisecond})
+	if err != nil {
+		t.Fatalf("run timeout command: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected structured run result")
+	}
+	if !result.Timeout {
+		t.Fatal("expected timeout flag")
+	}
+	if result.ErrorType != "timeout" {
+		t.Fatalf("expected timeout error type, got %q", result.ErrorType)
+	}
+	if result.ExitCode != 124 {
+		t.Fatalf("expected exit code 124, got %d", result.ExitCode)
+	}
+	if !strings.Contains(result.Stderr, "timed out") {
+		t.Fatalf("expected timeout stderr, got %q", result.Stderr)
 	}
 }

@@ -303,10 +303,11 @@ func (r *firecrackerRuntime) Exec(sessionID, command string, timeout time.Durati
 
 	return &ExecResult{
 		RequestID: requestID,
-		Stdout:   result.Stdout,
-		Stderr:   stderr,
-		ExitCode: result.ExitCode,
-		Duration: duration,
+		Stdout:    result.Stdout,
+		Stderr:    stderr,
+		ExitCode:  result.ExitCode,
+		TimedOut:  result.TimedOut,
+		Duration:  duration,
 	}, nil
 }
 

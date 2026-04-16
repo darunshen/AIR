@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/darunshen/AIR/internal/model"
@@ -13,10 +14,29 @@ import (
 
 type ExecResult struct {
 	RequestID string
-	Stdout   string
-	Stderr   string
-	ExitCode int
-	Duration time.Duration
+	Stdout    string
+	Stderr    string
+	ExitCode  int
+	TimedOut  bool
+	Duration  time.Duration
+}
+
+type RunOptions struct {
+	Provider string
+	Timeout  time.Duration
+}
+
+type RunResult struct {
+	SessionID    string `json:"session_id,omitempty"`
+	Provider     string `json:"provider"`
+	RequestID    string `json:"request_id,omitempty"`
+	Stdout       string `json:"stdout"`
+	Stderr       string `json:"stderr"`
+	ExitCode     int    `json:"exit_code"`
+	DurationMS   int64  `json:"duration_ms"`
+	Timeout      bool   `json:"timeout"`
+	ErrorType    string `json:"error_type,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
 }
 
 type Manager struct {
@@ -90,6 +110,10 @@ func (m *Manager) CreateWithProvider(provider string) (*model.Session, error) {
 }
 
 func (m *Manager) Exec(sessionID, command string) (*ExecResult, error) {
+	return m.ExecWithTimeout(sessionID, command, 30*time.Second)
+}
+
+func (m *Manager) ExecWithTimeout(sessionID, command string, timeout time.Duration) (*ExecResult, error) {
 	s, err := m.store.Get(sessionID)
 	if err != nil {
 		return nil, err
@@ -114,7 +138,7 @@ func (m *Manager) Exec(sessionID, command string) (*ExecResult, error) {
 		return nil, errors.New("session is not running")
 	}
 
-	result, err := runtime.Exec(sessionID, command, 30*time.Second)
+	result, err := runtime.Exec(sessionID, command, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -126,11 +150,72 @@ func (m *Manager) Exec(sessionID, command string) (*ExecResult, error) {
 
 	return &ExecResult{
 		RequestID: result.RequestID,
-		Stdout:   result.Stdout,
-		Stderr:   result.Stderr,
-		ExitCode: result.ExitCode,
-		Duration: result.Duration,
+		Stdout:    result.Stdout,
+		Stderr:    result.Stderr,
+		ExitCode:  result.ExitCode,
+		TimedOut:  result.TimedOut,
+		Duration:  result.Duration,
 	}, nil
+}
+
+func (m *Manager) Run(command string, opts RunOptions) (*RunResult, error) {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
+	result := &RunResult{
+		Provider: m.resolveProvider(opts.Provider),
+		ExitCode: -1,
+	}
+
+	s, err := m.CreateWithProvider(opts.Provider)
+	if err != nil {
+		result.ErrorType = classifyRunErrorType("create", err)
+		result.ErrorMessage = err.Error()
+		return result, err
+	}
+
+	result.SessionID = s.ID
+	result.Provider = s.Provider
+
+	execResult, execErr := m.ExecWithTimeout(s.ID, command, timeout)
+	if execErr == nil {
+		result.RequestID = execResult.RequestID
+		result.Stdout = execResult.Stdout
+		result.Stderr = execResult.Stderr
+		result.ExitCode = execResult.ExitCode
+		result.DurationMS = execResult.Duration.Milliseconds()
+		result.Timeout = execResult.TimedOut
+		if execResult.TimedOut {
+			result.ErrorType = "timeout"
+			result.ErrorMessage = "command timed out"
+		}
+	} else {
+		result.ErrorType = classifyRunErrorType("exec", execErr)
+		result.ErrorMessage = execErr.Error()
+	}
+
+	deleteErr := m.Delete(s.ID)
+	if deleteErr != nil {
+		if result.ErrorType == "" {
+			result.ErrorType = classifyRunErrorType("delete", deleteErr)
+			result.ErrorMessage = deleteErr.Error()
+		} else {
+			result.ErrorMessage = strings.TrimSpace(result.ErrorMessage + "; cleanup failed: " + deleteErr.Error())
+		}
+	}
+
+	switch {
+	case execErr != nil && deleteErr != nil:
+		return result, errors.Join(execErr, deleteErr)
+	case execErr != nil:
+		return result, execErr
+	case deleteErr != nil:
+		return result, deleteErr
+	default:
+		return result, nil
+	}
 }
 
 func (m *Manager) Delete(sessionID string) error {
@@ -258,6 +343,29 @@ func (m *Manager) ensureProvider(s *model.Session) error {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func (m *Manager) resolveProvider(provider string) string {
+	if provider != "" {
+		return provider
+	}
+	return m.provider
+}
+
+func classifyRunErrorType(stage string, err error) string {
+	switch stage {
+	case "create":
+		return "startup_error"
+	case "exec":
+		if errors.Is(err, vm.ErrGuestAgentNotReady) {
+			return "transport_error"
+		}
+		return "exec_error"
+	case "delete":
+		return "cleanup_error"
+	default:
+		return "runtime_error"
+	}
 }
 
 func (m *Manager) syncSessionState(s *model.Session, info *vm.InspectInfo) error {

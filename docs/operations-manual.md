@@ -11,6 +11,7 @@
 
 截至当前代码版本：
 
+- `air run`
 - `air session create`
 - `air session list`
 - `air session inspect`
@@ -19,6 +20,24 @@
 - `air session delete`
 
 已经可以通过 `local` provider 完整使用。
+
+`air run` 已经具备：
+
+- 一次性创建隔离环境
+- 执行单条命令
+- 返回结构化结果
+- 自动销毁临时 session
+- 支持 `--timeout`
+
+仓库还提供了一个最小 reference agent：
+
+- `examples/agent-runner`
+- 用于验证 AIR 是否适合 agent 消费
+- 当前内置 one-shot、session 多步执行、失败恢复三类任务
+
+关于外部 LLM agent 的选型与环境建议，见：
+
+- [AI Agent 选型与接入方案](agent-selection.md)
 
 `firecracker` provider 已经具备：
 
@@ -88,6 +107,9 @@ go build ./cmd/air
 也可以直接使用：
 
 ```bash
+go run ./cmd/air run -- echo hello
+go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
+go run ./examples/agent-runner --task all
 go run ./cmd/air session create
 go run ./cmd/air session create --provider local
 go run ./cmd/air session create --provider firecracker
@@ -97,7 +119,31 @@ go run ./cmd/air session create --provider firecracker
 
 `local` provider 是默认模式，不需要额外配置。
 
-### 4.1 创建 session
+### 4.1 一次性执行
+
+```bash
+go run ./cmd/air run -- echo hello
+go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
+```
+
+默认输出为结构化 JSON，字段包括：
+
+- `stdout`
+- `stderr`
+- `exit_code`
+- `request_id`
+- `duration_ms`
+- `timeout`
+- `error_type`
+- `error_message`
+
+如果想使用更适合人工查看的输出，可加：
+
+```bash
+go run ./cmd/air run --human -- echo hello
+```
+
+### 4.2 创建 session
 
 ```bash
 go run ./cmd/air session create
@@ -109,7 +155,7 @@ go run ./cmd/air session create
 sess_xxx
 ```
 
-### 4.2 执行命令
+### 4.3 执行命令
 
 ```bash
 go run ./cmd/air session exec <session_id> "echo hello > a.txt"
@@ -118,7 +164,7 @@ go run ./cmd/air session exec <session_id> "cat a.txt"
 
 在 `local` provider 下，命令会在该 session 独立 workspace 中执行，文件状态会保留到 session 删除为止。
 
-### 4.3 删除 session
+### 4.4 删除 session
 
 ```bash
 go run ./cmd/air session delete <session_id>
@@ -126,13 +172,13 @@ go run ./cmd/air session delete <session_id>
 
 删除后会同时移除对应运行目录，并从 `data/sessions.json` 中清除记录。
 
-### 4.4 查看 session 列表
+### 4.5 查看 session 列表
 
 ```bash
 go run ./cmd/air session list
 ```
 
-### 4.5 查看 session 详情
+### 4.6 查看 session 详情
 
 ```bash
 go run ./cmd/air session inspect <session_id>
