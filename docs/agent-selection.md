@@ -7,7 +7,7 @@
 
 ## 1. 当前结论
 
-截至 2026-04-16，AIR 的执行后端已经具备，但外部 LLM agent 还没有真正接入。
+截至 2026-04-16，AIR 的执行后端已经具备，并且 OpenAI / DeepSeek planner 都已经完成第一版接入。
 
 当前建议的第一阶段方案是：
 
@@ -17,6 +17,11 @@
 - 默认模型先用 `gpt-5.4-mini`
 - 复杂任务升级到 `gpt-5.4`
 - 保持 provider 抽象，后续再补 Anthropic 和 Gemini
+
+补充说明：
+
+- OpenAI 仍是默认接入 provider
+- DeepSeek 已可作为低成本替代 planner
 
 这不是在说 Anthropic 或 Gemini 不行，而是在 AIR 当前阶段，最重要的是先把“真实 agent 工作流”跑通，而不是同时做三套模型适配。
 
@@ -168,19 +173,20 @@ AIR 执行环境已经基本具备：
 - `examples/agent-runner` 固定策略版可用
 - Firecracker 实验链路可用
 
-### 6.2 还没搭起来的部分
+### 6.2 当前仍未完成的部分
 
-外部 LLM agent 环境还没真正接上：
+第一版 OpenAI / DeepSeek planner 已经接上，但还没有全部做完：
 
-- 还没有 `llm.Provider` 抽象
-- 还没有 OpenAI adapter
-- 还没有把 API key / model / reasoning 配置接入代码
-- 还没有让 `examples/agent-runner` 调用真实 LLM
+- 还没有 Anthropic / Gemini adapter
+- 还没有更复杂的“跑测试 -> 解析失败 -> 修复”任务
+- 还没有 prompt / model 自动升级策略
+- 还没有把 planner 抽成单独的 API 服务
 
 所以准确说法是：
 
 - AIR 执行环境：已搭起来
-- AI agent 模型接入环境：还没有完全搭起来
+- OpenAI / DeepSeek planner 接入环境：已搭起来第一版
+- 多 provider agent 平台：还没有完成
 
 ## 7. 第一阶段环境变量建议
 
@@ -208,12 +214,12 @@ GEMINI_MODEL=gemini-2.5-flash
 
 建议按这个顺序做：
 
-1. 定义 `llm.Provider` 抽象
-2. 先实现 OpenAI adapter
-3. 让 `examples/agent-runner` 增加 `--llm-provider openai`
-4. 先支持“给出下一步 shell 命令”的简单 planner
-5. 再做“跑测试 -> 解析失败 -> 继续修复”的闭环
-6. 最后再补 Anthropic / Gemini adapter
+1. 已定义 `llm.Provider` 抽象
+2. 已实现 OpenAI Responses API adapter
+3. 已让 `examples/agent-runner` 支持 OpenAI / DeepSeek planner
+4. 已支持基础 `test-and-fix` 闭环
+5. 再补 Anthropic / Gemini adapter
+6. 最后再考虑独立 planner service
 
 ## 9. 不建议现在做的事
 
@@ -230,7 +236,7 @@ GEMINI_MODEL=gemini-2.5-flash
 - 默认用 `gpt-5.4-mini`
 - 难任务升级到 `gpt-5.4`
 - AIR 保持 provider-agnostic 的 planner 抽象
-- 下一步直接开始做 OpenAI adapter
+- 下一步直接做更复杂的 planner task，并扩展多 provider
 
 ## 参考资料
 

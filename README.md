@@ -112,6 +112,7 @@ Hypervisor + Guest Agent + Rootfs
 - [Virtualization Selection](docs/virtualization-selection.md)
 - [VM Runtime Design](docs/vm-runtime-design.md)
 - [AI Agent Selection](docs/agent-selection.md)
+- [Using AIR From AI Agents](docs/ai-agent-usage.md)
 - [Firecracker Deployment Guide](docs/firecracker-deployment-guide.md)
 - [Operations Manual](docs/operations-manual.md)
 - [Repository Guidelines](AGENTS.md)
@@ -235,6 +236,7 @@ Hypervisor + Guest Agent + Rootfs
 - [虚拟化技术选型](docs/virtualization-selection.md)
 - [VM Runtime 设计](docs/vm-runtime-design.md)
 - [AI Agent 选型](docs/agent-selection.md)
+- [通过 AI Agent 使用 AIR](docs/ai-agent-usage.md)
 - [Firecracker 真机部署指南](docs/firecracker-deployment-guide.md)
 - [操作手册](docs/operations-manual.md)
 - [仓库协作指南](AGENTS.md)
@@ -265,7 +267,7 @@ Current implementation note:
 - Firecracker now uses a per-session writable rootfs image copied from the configured base rootfs
 - `air session list` / `inspect` / `console` / `events` are available for basic debugging
 - `air run` supports `--provider`, `--timeout`, and structured JSON output for agent consumption
-- `examples/agent-runner` provides a fixed-strategy reference agent that exercises one-shot runs, stateful sessions, and failure recovery
+- `examples/agent-runner` now supports OpenAI and DeepSeek planners, with `scripted` as an offline fallback
 - `docs/agent-selection.md` now records the first external LLM integration decision and environment template
 - `scripts/prepare-firecracker-rootfs.sh` rebuilds the demo rootfs with `air-agent` baked in and enabled through OpenRC `local.d`
 
@@ -304,6 +306,8 @@ Debugging commands:
 
 - `air run [--provider ...] [--timeout 30s] -- <command>`
 - `go run ./examples/agent-runner --task all`
+- `go run ./examples/agent-runner --planner deepseek --model deepseek-chat --task all`
+- `go run ./examples/agent-runner --planner scripted --task all`
 - `air session list`
 - `air session inspect <id>`
 - `air session console <id> [--tail=N]`

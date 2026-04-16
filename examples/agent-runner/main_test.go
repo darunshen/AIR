@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/darunshen/AIR/internal/session"
 )
@@ -19,24 +21,26 @@ func TestRunnerTasks(t *testing.T) {
 		t.Fatalf("new manager: %v", err)
 	}
 
-	r := &runner{manager: manager}
+	r := &runner{
+		manager:        manager,
+		plannerName:    "scripted",
+		planner:        scriptedPlanner{},
+		commandTimeout: 5 * time.Second,
+	}
 
-	for _, tc := range []struct {
-		name string
-		run  func() taskReport
-	}{
-		{name: "run-smoke", run: r.runSmokeTask},
-		{name: "session-workflow", run: r.runSessionWorkflowTask},
-		{name: "session-recovery", run: r.runSessionRecoveryTask},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.run()
-			if !result.Success {
-				t.Fatalf("task %s failed: %+v", tc.name, result)
-			}
-			if len(result.Steps) == 0 {
-				t.Fatalf("task %s returned no steps", tc.name)
-			}
-		})
+	results, err := r.runSelected(context.Background(), "all")
+	if err != nil {
+		t.Fatalf("run selected: %v", err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("expected 4 task results, got %d", len(results))
+	}
+	for _, result := range results {
+		if !result.Success {
+			t.Fatalf("task %s failed: %+v", result.Name, result)
+		}
+		if len(result.Steps) == 0 {
+			t.Fatalf("task %s returned no steps", result.Name)
+		}
 	}
 }

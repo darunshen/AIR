@@ -33,11 +33,15 @@
 
 - `examples/agent-runner`
 - 用于验证 AIR 是否适合 agent 消费
+- 当前已支持 OpenAI planner
+- 当前已支持 DeepSeek planner
+- 当前也保留 `scripted` planner 作为离线 fallback
 - 当前内置 one-shot、session 多步执行、失败恢复三类任务
 
 关于外部 LLM agent 的选型与环境建议，见：
 
 - [AI Agent 选型与接入方案](agent-selection.md)
+- [通过 AI Agent 使用 AIR](ai-agent-usage.md)
 
 `firecracker` provider 已经具备：
 
@@ -110,6 +114,8 @@ go build ./cmd/air
 go run ./cmd/air run -- echo hello
 go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
 go run ./examples/agent-runner --task all
+go run ./examples/agent-runner --planner deepseek --model deepseek-chat --task all
+go run ./examples/agent-runner --planner scripted --task all
 go run ./cmd/air session create
 go run ./cmd/air session create --provider local
 go run ./cmd/air session create --provider firecracker
