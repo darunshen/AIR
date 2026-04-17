@@ -46,6 +46,8 @@ Create VM -> Load environment -> Execute -> Return output -> Destroy VM
 #### 2. Stateful session execution
 
 ```bash
+air init firecracker
+air doctor --provider firecracker --human
 air session create
 air session create --provider local
 air session create --provider firecracker
@@ -245,6 +247,15 @@ Hypervisor + Guest Agent + Rootfs
 - [项目路线图](ROADMAP.md)
 - [贡献指南](CONTRIBUTING.md)
 
+如果你是通过 `.deb` 安装 AIR，需要注意当前安装包只包含 CLI，不包含 Firecracker 二进制、`vmlinux`、`rootfs.ext4`。要启用 `firecracker` provider，先执行：
+
+```bash
+air init firecracker
+air doctor --provider firecracker --human
+```
+
+`air init firecracker` 会交互询问你是下载 AIR 官方镜像包，还是自己部署 Firecracker 资产。
+
 ### 社区建设
 
 AIR 的目标是面向社区持续建设。欢迎以下方向的开发者加入：
@@ -279,6 +290,8 @@ Distribution:
 - Build release artifacts locally with `./scripts/build-release-artifacts.sh dist`
 - The repository includes a GitHub Actions workflow at `.github/workflows/release.yml`
 - Packaging details are documented in `docs/release-distribution.md`
+- The current `.deb` package contains only `air` and `air-agent`; Firecracker runtime assets must be installed separately
+- Official releases now also publish `air_firecracker_linux_<arch>.tar.gz` for `air init firecracker`
 
 Runtime configuration:
 
@@ -292,6 +305,7 @@ Startup shortcut:
 
 - After running `scripts/fetch-firecracker-demo-assets.sh` and `scripts/prepare-firecracker-rootfs.sh`, you can usually start the Firecracker provider from the repository root with only `AIR_VM_RUNTIME=firecracker`
 - If `assets/firecracker/firecracker`, `assets/firecracker/hello-vmlinux.bin`, and `assets/firecracker/hello-rootfs-air.ext4` exist, AIR will auto-discover them
+- AIR also auto-discovers the same files under `/usr/lib/air/firecracker` and `/usr/local/lib/air/firecracker`
 - You can also bypass the default provider and create a session explicitly with `air session create --provider firecracker`
 
 Firecracker runtime layout:
@@ -313,6 +327,8 @@ Real-environment lifecycle test:
 
 Debugging commands:
 
+- `air init firecracker`
+- `air doctor --provider firecracker --human`
 - `air run [--provider ...] [--timeout 30s] -- <command>`
 - `go run ./examples/agent-runner --task all`
 - `go run ./examples/agent-runner --planner deepseek --model deepseek-chat --task all`

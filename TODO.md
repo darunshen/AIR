@@ -19,6 +19,8 @@
 - 文档基础已补齐
   - `docs/operations-manual.md`
   - `docs/firecracker-deployment-guide.md`
+  - 已补充 `air doctor` 的安装与排障说明
+  - 已补充 `air init firecracker` 的交互式安装说明
 
 - 基础调试能力已接入
   - `air session list`
@@ -27,6 +29,8 @@
   - `air session console <id> --follow`
   - `air session events <id>`
   - `air session events <id> --follow`
+  - `air init firecracker`
+  - `air doctor --provider firecracker`
   - runtime inspect 已返回 provider、pid、console、socket、vsock、config 等路径
   - `list` / `inspect` 会按 runtime 实况刷新 session 状态
   - 旧 session 缺失 `provider` 时可自动补全
@@ -112,6 +116,7 @@
   - 已支持 `air-agent --version`
   - 已新增 release 打包脚本
   - 已支持 GitHub Release 归档产物
+  - 已支持 Firecracker 官方 bundle 归档产物
   - 已支持 `.deb` 打包
   - 已支持 apt repo 目录产物构建
   - 已新增 GitHub Actions release workflow
@@ -192,6 +197,7 @@
   - 实现方式：
     - 支持 `air run --provider firecracker`
     - 支持从配置文件或环境变量读取 provider 参数
+    - 已支持从 `./assets/firecracker/`、`/usr/lib/air/firecracker/`、`/usr/local/lib/air/firecracker/` 自动发现 demo 资产
     - 支持一个“demo 配置预设”，减少 agent runner 的启动负担
     - 保证 reference agent 不需要拼大量环境变量
 

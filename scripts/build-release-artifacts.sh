@@ -62,6 +62,10 @@ for arch in amd64 arm64; do
   debs+=("$deb")
 done
 
+for arch in amd64 arm64; do
+  "$ROOT_DIR/scripts/build-firecracker-bundle.sh" "$OUT_DIR_ABS" "$arch"
+done
+
 "$ROOT_DIR/scripts/build-apt-repo.sh" "$OUT_DIR_ABS/apt-repo" "$VERSION_CLEAN" "${debs[@]}"
 tar -C "$OUT_DIR_ABS" -czf "$OUT_DIR_ABS/air_${VERSION}_apt-repo.tar.gz" apt-repo
 

@@ -28,7 +28,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Install packaging tools
-        run: sudo apt-get update && sudo apt-get install -y dpkg-dev zip
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev zip e2fsprogs
 
       - name: Build release artifacts
         env:
