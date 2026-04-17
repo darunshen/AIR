@@ -113,6 +113,7 @@ Hypervisor + Guest Agent + Rootfs
 - [VM Runtime Design](docs/vm-runtime-design.md)
 - [AI Agent Selection](docs/agent-selection.md)
 - [Using AIR From AI Agents](docs/ai-agent-usage.md)
+- [Release And Distribution](docs/release-distribution.md)
 - [Firecracker Deployment Guide](docs/firecracker-deployment-guide.md)
 - [Operations Manual](docs/operations-manual.md)
 - [Repository Guidelines](AGENTS.md)
@@ -237,6 +238,7 @@ Hypervisor + Guest Agent + Rootfs
 - [VM Runtime 设计](docs/vm-runtime-design.md)
 - [AI Agent 选型](docs/agent-selection.md)
 - [通过 AI Agent 使用 AIR](docs/ai-agent-usage.md)
+- [发布与安装包交付](docs/release-distribution.md)
 - [Firecracker 真机部署指南](docs/firecracker-deployment-guide.md)
 - [操作手册](docs/operations-manual.md)
 - [仓库协作指南](AGENTS.md)
@@ -270,6 +272,13 @@ Current implementation note:
 - `examples/agent-runner` now supports OpenAI and DeepSeek planners, with `scripted` as an offline fallback
 - `docs/agent-selection.md` now records the first external LLM integration decision and environment template
 - `scripts/prepare-firecracker-rootfs.sh` rebuilds the demo rootfs with `air-agent` baked in and enabled through OpenRC `local.d`
+- Release packaging now supports GitHub Release archives, `.deb` packages, and an initial apt repository directory bundle
+
+Distribution:
+
+- Build release artifacts locally with `./scripts/build-release-artifacts.sh dist`
+- The repository includes a GitHub Actions workflow at `.github/workflows/release.yml`
+- Packaging details are documented in `docs/release-distribution.md`
 
 Runtime configuration:
 

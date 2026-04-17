@@ -4,3 +4,4 @@ air
 *.test
 *.test.exe
 assets/firecracker/
+dist/

@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/darunshen/AIR/internal/buildinfo"
 	"github.com/darunshen/AIR/internal/model"
 	"github.com/darunshen/AIR/internal/session"
 )
@@ -30,6 +31,8 @@ func main() {
 	}
 
 	switch args[0] {
+	case "version":
+		printJSON(buildinfo.Current())
 	case "run":
 		opts, command, err := parseRunFlags(args[1:])
 		if err != nil {
@@ -175,6 +178,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
+	fmt.Fprintln(os.Stderr, "  air version")
 	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--timeout 30s] [--human] -- <command>")
 	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker]")
 	fmt.Fprintln(os.Stderr, "  air session list")

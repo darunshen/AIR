@@ -1,0 +1,53 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label, for example v0.1.0"
+        required: true
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev zip
+
+      - name: Build release artifacts
+        env:
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          BUILD_DATE: ${{ github.run_id }}
+        run: |
+          export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ./scripts/build-release-artifacts.sh dist
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+            dist/checksums.txt
+            dist/BUILD_INFO.txt
+            dist/*apt-repo.tar.gz
