@@ -217,14 +217,15 @@
 - 继续补强 `examples/agent-runner`
   - 当前已有 OpenAI planner 版 reference agent
   - 下一步重点：
-    - 增加 prompt / model 升级策略
+    - 已支持基础 model 升级策略
+    - 下一步补 prompt 升级策略
     - 用它持续反向校验 `air run`、session API、错误结构、timeout、事件日志是否足够
 
 - 增加 OpenAI planner 接入
   - 已完成第一版
   - 下一步：
     - 增加更复杂的 task prompt
-    - 增加 planner 失败重试与模型升级策略
+    - 已支持 planner 失败重试与模型升级策略
     - 评估是否接 Anthropic / Gemini
     - 第一版仍只做单 agent planner，不做多 agent 编排
 

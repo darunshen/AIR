@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/darunshen/AIR/internal/llm"
 )
+
+type plannerFactory func(llm.Config) (llm.Planner, string, error)
 
 func newRunnerPlanner(cfg llm.Config) (llm.Planner, string, error) {
 	switch cfg.Provider {
@@ -20,6 +23,33 @@ func newRunnerPlanner(cfg llm.Config) (llm.Planner, string, error) {
 	default:
 		return nil, "", fmt.Errorf("unsupported planner: %s", cfg.Provider)
 	}
+}
+
+func plannerModelCandidates(plannerName, model, escalationModel string) []string {
+	if plannerName == "scripted" {
+		return []string{""}
+	}
+
+	candidates := make([]string, 0, 2)
+	seen := map[string]struct{}{}
+	appendCandidate := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		candidates = append(candidates, value)
+	}
+
+	appendCandidate(model)
+	appendCandidate(escalationModel)
+	if len(candidates) == 0 {
+		candidates = append(candidates, model)
+	}
+	return candidates
 }
 
 type scriptedPlanner struct{}

@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/darunshen/AIR/internal/llm"
@@ -13,13 +15,15 @@ import (
 )
 
 type report struct {
-	StartedAt time.Time    `json:"started_at"`
-	Planner   string       `json:"planner"`
-	Model     string       `json:"model,omitempty"`
-	Provider  string       `json:"provider"`
-	Task      string       `json:"task"`
-	Success   bool         `json:"success"`
-	Tasks     []taskReport `json:"tasks"`
+	StartedAt       time.Time    `json:"started_at"`
+	Planner         string       `json:"planner"`
+	Model           string       `json:"model,omitempty"`
+	EscalationModel string       `json:"escalation_model,omitempty"`
+	PlannerRetries  int          `json:"planner_retries,omitempty"`
+	Provider        string       `json:"provider"`
+	Task            string       `json:"task"`
+	Success         bool         `json:"success"`
+	Tasks           []taskReport `json:"tasks"`
 }
 
 type taskReport struct {
@@ -32,28 +36,33 @@ type taskReport struct {
 }
 
 type stepReport struct {
-	Name         string `json:"name"`
-	Kind         string `json:"kind"`
-	Command      string `json:"command,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	RequestID    string `json:"request_id,omitempty"`
-	Stdout       string `json:"stdout,omitempty"`
-	Stderr       string `json:"stderr,omitempty"`
-	ExitCode     int    `json:"exit_code,omitempty"`
-	DurationMS   int64  `json:"duration_ms,omitempty"`
-	Timeout      bool   `json:"timeout,omitempty"`
-	Success      bool   `json:"success"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	Note         string `json:"note,omitempty"`
+	Name           string `json:"name"`
+	Kind           string `json:"kind"`
+	Command        string `json:"command,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	RequestID      string `json:"request_id,omitempty"`
+	PlannerModel   string `json:"planner_model,omitempty"`
+	PlannerAttempt int    `json:"planner_attempt,omitempty"`
+	Stdout         string `json:"stdout,omitempty"`
+	Stderr         string `json:"stderr,omitempty"`
+	ExitCode       int    `json:"exit_code,omitempty"`
+	DurationMS     int64  `json:"duration_ms,omitempty"`
+	Timeout        bool   `json:"timeout,omitempty"`
+	Success        bool   `json:"success"`
+	ErrorMessage   string `json:"error_message,omitempty"`
+	Note           string `json:"note,omitempty"`
 }
 
 type runner struct {
-	manager        *session.Manager
-	provider       string
-	plannerName    string
-	planner        llm.Planner
-	model          string
-	commandTimeout time.Duration
+	manager         *session.Manager
+	provider        string
+	plannerName     string
+	plannerConfig   llm.Config
+	plannerFactory  plannerFactory
+	model           string
+	escalationModel string
+	plannerRetries  int
+	commandTimeout  time.Duration
 }
 
 func main() {
@@ -61,6 +70,8 @@ func main() {
 	provider := flag.String("provider", "", "runtime provider: local or firecracker")
 	plannerName := flag.String("planner", "", "planner backend: openai or scripted")
 	model := flag.String("model", "", "planner model override")
+	escalationModel := flag.String("escalation-model", "", "planner escalation model override")
+	plannerRetries := flag.Int("planner-retries", -1, "planner retries before escalation")
 	reasoning := flag.String("reasoning", "", "planner reasoning override")
 	flag.Parse()
 
@@ -71,12 +82,15 @@ func main() {
 	if *model != "" {
 		cfg.Model = *model
 	}
+	if *escalationModel == "" {
+		*escalationModel = os.Getenv("AIR_AGENT_ESCALATION_MODEL")
+	}
 	if *reasoning != "" {
 		cfg.Reasoning = *reasoning
 	}
 	cfg = llm.NormalizeConfig(cfg)
 
-	planner, resolvedPlanner, err := newRunnerPlanner(cfg)
+	_, resolvedPlanner, err := newRunnerPlanner(cfg)
 	if err != nil {
 		exitJSONError(err)
 	}
@@ -87,22 +101,27 @@ func main() {
 	}
 
 	r := &runner{
-		manager:        manager,
-		provider:       *provider,
-		plannerName:    resolvedPlanner,
-		planner:        planner,
-		model:          cfg.Model,
-		commandTimeout: 10 * time.Second,
+		manager:         manager,
+		provider:        *provider,
+		plannerName:     resolvedPlanner,
+		plannerConfig:   cfg,
+		plannerFactory:  newRunnerPlanner,
+		model:           cfg.Model,
+		escalationModel: strings.TrimSpace(*escalationModel),
+		plannerRetries:  resolvePlannerRetries(*plannerRetries),
+		commandTimeout:  10 * time.Second,
 	}
 
 	ctx := context.Background()
 	result := report{
-		StartedAt: time.Now().UTC(),
-		Planner:   resolvedPlanner,
-		Model:     plannerModel(resolvedPlanner, cfg.Model),
-		Provider:  resolvedProvider(*provider),
-		Task:      *task,
-		Success:   true,
+		StartedAt:       time.Now().UTC(),
+		Planner:         resolvedPlanner,
+		Model:           plannerModel(resolvedPlanner, cfg.Model),
+		EscalationModel: plannerModel(resolvedPlanner, strings.TrimSpace(*escalationModel)),
+		PlannerRetries:  resolvePlannerRetries(*plannerRetries),
+		Provider:        resolvedProvider(*provider),
+		Task:            *task,
+		Success:         true,
 	}
 
 	tasks, err := r.runSelected(ctx, *task)
@@ -135,6 +154,18 @@ func plannerModel(plannerName, model string) string {
 		return ""
 	}
 	return model
+}
+
+func resolvePlannerRetries(value int) int {
+	if value >= 0 {
+		return value
+	}
+	if raw := os.Getenv("AIR_AGENT_PLANNER_RETRIES"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			return parsed
+		}
+	}
+	return 1
 }
 
 func firstError(existing, fallback string) string {

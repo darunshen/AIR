@@ -212,11 +212,11 @@ go run ./examples/agent-runner --planner scripted --task all
 - one-shot / session / recovery / test-and-fix
 - `air run` 已支持稳定 `error_type`
 - OpenAI / DeepSeek / scripted 三类 planner
+- `examples/agent-runner` 已支持 planner 重试和模型升级
 
 当前还没有：
 
 - 多 agent 编排
-- 自动模型升级策略
 - Anthropic / Gemini adapter
 - HTTP API 形式的 planner service
 - 更复杂的 repo 修复任务集

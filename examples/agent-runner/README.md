@@ -16,6 +16,7 @@
 - AIR 的一次性执行接口是否足够给 agent 使用
 - AIR 的 session 工作流是否足够支持多步任务
 - stdout / stderr / exit code / request_id / timeout 是否足够做下一步决策
+- planner 失败时的重试和模型升级策略是否足够稳定
 
 ## 运行方式
 
@@ -68,12 +69,20 @@ go run ./examples/agent-runner --provider firecracker --task all
 go run ./examples/agent-runner --model gpt-5.4 --task all
 ```
 
+显式指定升级模型和重试次数：
+
+```bash
+go run ./examples/agent-runner --model gpt-5.4-mini --escalation-model gpt-5.4 --planner-retries 1 --task all
+```
+
 运行前需要准备：
 
 ```bash
 export OPENAI_API_KEY=...
 export AIR_AGENT_PROVIDER=openai
 export AIR_AGENT_MODEL=gpt-5.4-mini
+export AIR_AGENT_ESCALATION_MODEL=gpt-5.4
+export AIR_AGENT_PLANNER_RETRIES=1
 export AIR_AGENT_REASONING=medium
 ```
 
@@ -110,6 +119,8 @@ export AIR_AGENT_REASONING=medium
 
 - planner 类型
 - planner 模型
+- planner 升级模型
+- planner 重试次数
 - 每一步的命令
 - stdout / stderr / exit_code / request_id / timeout
 - planner 最终的 `finish` 判定

@@ -179,7 +179,7 @@ AIR 执行环境已经基本具备：
 
 - 还没有 Anthropic / Gemini adapter
 - 还没有更复杂的“跑测试 -> 解析失败 -> 修复”任务
-- 还没有 prompt / model 自动升级策略
+- 已支持基础模型升级策略，但还没有 prompt 自动升级策略
 - 还没有把 planner 抽成单独的 API 服务
 
 所以准确说法是：
@@ -196,6 +196,7 @@ AIR 执行环境已经基本具备：
 AIR_AGENT_PROVIDER=openai
 AIR_AGENT_MODEL=gpt-5.4-mini
 AIR_AGENT_ESCALATION_MODEL=gpt-5.4
+AIR_AGENT_PLANNER_RETRIES=1
 AIR_AGENT_REASONING=medium
 OPENAI_API_KEY=...
 ```
