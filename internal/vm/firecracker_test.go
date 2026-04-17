@@ -290,6 +290,33 @@ func TestFirecrackerPreflightRequiresAssets(t *testing.T) {
 	}
 }
 
+func TestFirecrackerPayloadsUseConfiguredResources(t *testing.T) {
+	t.Helper()
+
+	rtAny, err := NewWithConfig(Config{
+		Root:      t.TempDir(),
+		Provider:  "firecracker",
+		MemoryMiB: 768,
+		VCPUCount: 2,
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+
+	rt, ok := rtAny.(*firecrackerRuntime)
+	if !ok {
+		t.Fatalf("expected firecracker runtime, got %T", rtAny)
+	}
+
+	payloads := rt.payloads("sess_resources", rt.paths("sess_resources"))
+	if payloads.machineConfig.MemSizeMiB != 768 {
+		t.Fatalf("unexpected memory size: %d", payloads.machineConfig.MemSizeMiB)
+	}
+	if payloads.machineConfig.VCPUCount != 2 {
+		t.Fatalf("unexpected vcpu count: %d", payloads.machineConfig.VCPUCount)
+	}
+}
+
 func TestFirecrackerExecOverVSockBridge(t *testing.T) {
 	t.Helper()
 

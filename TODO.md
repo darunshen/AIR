@@ -68,8 +68,11 @@
   - 内部复用 `session create -> exec -> delete`
   - 已支持 `--provider`
   - 已支持 `--timeout`
+  - 已支持 `--memory-mib`
+  - 已支持 `--vcpu-count`
   - 默认返回结构化 JSON
   - 已支持 `--human` 便于人工调试
+  - 非零退出已返回稳定 `exec_error`
 
 - reference agent 初版已接入
   - 已有 `examples/agent-runner`
@@ -176,7 +179,7 @@
   - 明确超时、OOM、guest 异常退出时的返回语义
   - 实现方式：
     - 先支持 `--timeout`
-    - 再支持基础资源参数，如 `--memory-mib`、`--vcpu-count`
+    - 已支持基础资源参数 `--memory-mib`、`--vcpu-count`
     - Host 侧统一把超时、信号中断、guest 失联转换成稳定错误类型
     - 先定义错误枚举，再回填具体实现
 
@@ -209,6 +212,7 @@
     - CLI JSON 输出与内部结构保持一致
     - `events.jsonl` 中记录相同 `request_id`，便于串联排障
     - 文档中明确每类失败的判定方式
+    - 已补充稳定 `error_type` 枚举：`invalid_argument` / `startup_error` / `transport_error` / `exec_error` / `timeout` / `cleanup_error`
 
 - 继续补强 `examples/agent-runner`
   - 当前已有 OpenAI planner 版 reference agent

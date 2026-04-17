@@ -277,7 +277,7 @@ func TestRunCreatesExecutesAndCleansUp(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", result.ExitCode)
 	}
-	if result.ErrorType != "" {
+	if result.ErrorType != RunErrorTypeNone {
 		t.Fatalf("expected empty error type, got %q", result.ErrorType)
 	}
 
@@ -316,7 +316,7 @@ func TestRunTimeoutReturnsStructuredResult(t *testing.T) {
 	if !result.Timeout {
 		t.Fatal("expected timeout flag")
 	}
-	if result.ErrorType != "timeout" {
+	if result.ErrorType != RunErrorTypeTimeout {
 		t.Fatalf("expected timeout error type, got %q", result.ErrorType)
 	}
 	if result.ExitCode != 124 {
@@ -324,5 +324,59 @@ func TestRunTimeoutReturnsStructuredResult(t *testing.T) {
 	}
 	if !strings.Contains(result.Stderr, "timed out") {
 		t.Fatalf("expected timeout stderr, got %q", result.Stderr)
+	}
+}
+
+func TestRunNonZeroExitReturnsExecError(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	result, err := manager.Run("sh -c 'echo boom >&2; exit 7'", RunOptions{})
+	if err != nil {
+		t.Fatalf("run non-zero exit command: %v", err)
+	}
+	if result.ExitCode != 7 {
+		t.Fatalf("expected exit code 7, got %d", result.ExitCode)
+	}
+	if result.ErrorType != RunErrorTypeExec {
+		t.Fatalf("expected exec error type, got %q", result.ErrorType)
+	}
+	if !strings.Contains(result.ErrorMessage, "code 7") {
+		t.Fatalf("unexpected error message: %q", result.ErrorMessage)
+	}
+	if strings.TrimSpace(result.Stderr) != "boom" {
+		t.Fatalf("unexpected stderr: %q", result.Stderr)
+	}
+}
+
+func TestRunRejectsInvalidResourceOptions(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	result, err := manager.Run("echo hello", RunOptions{MemoryMiB: -1})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if result == nil {
+		t.Fatal("expected structured result")
+	}
+	if result.ErrorType != RunErrorTypeInvalidArgument {
+		t.Fatalf("expected invalid argument error type, got %q", result.ErrorType)
 	}
 }
