@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/darunshen/AIR/internal/llm"
@@ -145,7 +146,7 @@ func (r *runner) runTask(ctx context.Context, spec taskSpec) (result taskReport)
 	}
 
 	for stepNum := 1; stepNum <= spec.MaxSteps; stepNum++ {
-		action, err := r.planner.NextAction(ctx, llm.PlanRequest{
+		request := llm.PlanRequest{
 			TaskName:           spec.Name,
 			Goal:               spec.Goal,
 			Mode:               spec.Mode,
@@ -155,7 +156,9 @@ func (r *runner) runTask(ctx context.Context, spec taskSpec) (result taskReport)
 			Step:               stepNum,
 			MaxSteps:           spec.MaxSteps,
 			History:            history,
-		})
+		}
+		action, plannerSteps, err := r.nextPlannerAction(ctx, request)
+		result.Steps = append(result.Steps, plannerSteps...)
 		if err != nil {
 			result.Success = false
 			result.ErrorMessage = err.Error()
@@ -239,6 +242,85 @@ func (r *runner) runTask(ctx context.Context, spec taskSpec) (result taskReport)
 		ErrorMessage: "planner exceeded max steps",
 	})
 	return result
+}
+
+func (r *runner) nextPlannerAction(ctx context.Context, req llm.PlanRequest) (*llm.PlanAction, []stepReport, error) {
+	models := plannerModelCandidates(r.plannerName, r.model, r.escalationModel)
+	if len(models) == 0 {
+		return nil, nil, fmt.Errorf("no planner model configured")
+	}
+
+	attemptsPerModel := r.plannerRetries + 1
+	if attemptsPerModel <= 0 {
+		attemptsPerModel = 1
+	}
+
+	var plannerSteps []stepReport
+	var lastErr error
+	globalAttempt := 0
+
+	for modelIndex, model := range models {
+		cfg := r.plannerConfig
+		if model != "" {
+			cfg.Model = model
+		}
+		planner, _, err := r.plannerFactory(cfg)
+		if err != nil {
+			return nil, plannerSteps, err
+		}
+
+		for attempt := 1; attempt <= attemptsPerModel; attempt++ {
+			if modelIndex > 0 && attempt == 1 {
+				plannerSteps = append(plannerSteps, stepReport{
+					Name:           fmt.Sprintf("plan_%02d_escalation", req.Step),
+					Kind:           "planner_escalation",
+					SessionID:      req.SessionID,
+					PlannerModel:   model,
+					PlannerAttempt: globalAttempt + 1,
+					Success:        true,
+					Note:           fmt.Sprintf("escalate planner model from %s to %s", models[modelIndex-1], model),
+				})
+			}
+			globalAttempt++
+			action, err := planner.NextAction(ctx, req)
+			if err == nil {
+				if globalAttempt > 1 {
+					plannerSteps = append(plannerSteps, stepReport{
+						Name:           fmt.Sprintf("plan_%02d_recovered", req.Step),
+						Kind:           "planner_recovered",
+						SessionID:      req.SessionID,
+						PlannerModel:   model,
+						PlannerAttempt: globalAttempt,
+						Success:        true,
+						Note:           "planner returned a valid action after retry/escalation",
+					})
+				}
+				return action, plannerSteps, nil
+			}
+
+			lastErr = err
+			stepKind := "planner_retry"
+			note := "retry the same planner model"
+			if model == "" {
+				note = strings.TrimSpace("retry scripted planner")
+			}
+			plannerSteps = append(plannerSteps, stepReport{
+				Name:           fmt.Sprintf("plan_%02d_attempt_%02d", req.Step, globalAttempt),
+				Kind:           stepKind,
+				SessionID:      req.SessionID,
+				PlannerModel:   model,
+				PlannerAttempt: globalAttempt,
+				Success:        false,
+				ErrorMessage:   err.Error(),
+				Note:           note,
+			})
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("planner did not return an action")
+	}
+	return nil, plannerSteps, fmt.Errorf("planner failed after %d attempt(s): %w", globalAttempt, lastErr)
 }
 
 func (r *runner) runOneShot(action *llm.PlanAction, timeout time.Duration) stepReport {
