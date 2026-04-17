@@ -36,6 +36,25 @@
 - 当前内核已加载 KVM 模块
 - 当前用户可以读写 `/dev/kvm`
 
+AIR 侧也提供了统一预检入口：
+
+```bash
+air init firecracker
+air doctor --provider firecracker --human
+```
+
+如果你还在仓库内开发，也可以执行：
+
+```bash
+go run ./cmd/air init firecracker
+go run ./cmd/air doctor --provider firecracker --human
+```
+
+其中：
+
+- `air init firecracker` 用于交互式选择“下载 AIR 官方镜像包”或“自己部署”
+- `air doctor --provider firecracker --human` 用于检查结果是否完整
+
 ## 3. 检查 KVM
 
 ### 3.1 确认模块已加载
@@ -120,6 +139,13 @@ assets/firecracker/
 - 官方 release 的 `firecracker`
 - 官方 demo `hello-vmlinux.bin`
 - 官方 demo `hello-rootfs.ext4`
+
+如果这些文件后续放在以下目录之一，AIR 也会自动发现：
+
+- `assets/firecracker/`
+- `/usr/lib/air/firecracker/`
+- `/usr/local/lib/air/firecracker/`
+- `~/.local/share/air/firecracker/`
 
 ### 4.2 从源码构建
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,8 +15,10 @@ import (
 	"time"
 
 	"github.com/darunshen/AIR/internal/buildinfo"
+	"github.com/darunshen/AIR/internal/install"
 	"github.com/darunshen/AIR/internal/model"
 	"github.com/darunshen/AIR/internal/session"
+	"github.com/darunshen/AIR/internal/vm"
 )
 
 func main() {
@@ -33,6 +36,42 @@ func main() {
 	switch args[0] {
 	case "version":
 		printJSON(buildinfo.Current())
+	case "init":
+		if len(args) < 2 {
+			usage()
+			os.Exit(1)
+		}
+		switch args[1] {
+		case "firecracker":
+			opts, err := parseInitFirecrackerFlags(args[2:])
+			if err != nil {
+				exitErr(err)
+			}
+			if err := runInitFirecracker(opts); err != nil {
+				exitErr(err)
+			}
+		default:
+			usage()
+			os.Exit(1)
+		}
+	case "doctor":
+		opts, err := parseDoctorFlags(args[1:])
+		if err != nil {
+			exitErr(err)
+		}
+		cfg := vm.ResolveConfig("runtime/sessions")
+		if opts.Provider != "" {
+			cfg.Provider = opts.Provider
+		}
+		report := vm.Diagnose(cfg)
+		if opts.Human {
+			printDoctorHuman(report)
+		} else {
+			printJSON(report)
+		}
+		if !report.Ready {
+			os.Exit(1)
+		}
 	case "run":
 		opts, command, err := parseRunFlags(args[1:])
 		if err != nil {
@@ -179,6 +218,8 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  air version")
+	fmt.Fprintln(os.Stderr, "  air init firecracker [--source official|custom] [--dir PATH] [--yes]")
+	fmt.Fprintln(os.Stderr, "  air doctor [--provider local|firecracker] [--human]")
 	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--timeout 30s] [--human] -- <command>")
 	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker]")
 	fmt.Fprintln(os.Stderr, "  air session list")
@@ -191,6 +232,9 @@ func usage() {
 
 func exitErr(err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
+	if hint := firecrackerDoctorHint(err); hint != "" {
+		fmt.Fprintln(os.Stderr, "hint:", hint)
+	}
 	os.Exit(1)
 }
 
@@ -215,6 +259,231 @@ func printJSON(v any) {
 		exitErr(err)
 	}
 	fmt.Println(string(body))
+}
+
+type doctorCLIOptions struct {
+	Provider string
+	Human    bool
+}
+
+type initFirecrackerCLIOptions struct {
+	Source string
+	Dir    string
+	Yes    bool
+}
+
+func parseDoctorFlags(args []string) (doctorCLIOptions, error) {
+	var opts doctorCLIOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--human":
+			opts.Human = true
+		case arg == "--provider":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return doctorCLIOptions{}, errors.New("provider must not be empty")
+			}
+			opts.Provider = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--provider="):
+			opts.Provider = strings.TrimPrefix(arg, "--provider=")
+			if opts.Provider == "" {
+				return doctorCLIOptions{}, errors.New("provider must not be empty")
+			}
+		default:
+			return doctorCLIOptions{}, fmt.Errorf("unknown doctor flag: %s", arg)
+		}
+	}
+	return opts, nil
+}
+
+func parseInitFirecrackerFlags(args []string) (initFirecrackerCLIOptions, error) {
+	var opts initFirecrackerCLIOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--yes":
+			opts.Yes = true
+		case arg == "--source":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return initFirecrackerCLIOptions{}, errors.New("source must not be empty")
+			}
+			opts.Source = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--source="):
+			opts.Source = strings.TrimPrefix(arg, "--source=")
+		case arg == "--dir":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return initFirecrackerCLIOptions{}, errors.New("dir must not be empty")
+			}
+			opts.Dir = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--dir="):
+			opts.Dir = strings.TrimPrefix(arg, "--dir=")
+		default:
+			return initFirecrackerCLIOptions{}, fmt.Errorf("unknown init flag: %s", arg)
+		}
+	}
+	switch opts.Source {
+	case "", "official", "custom":
+	default:
+		return initFirecrackerCLIOptions{}, fmt.Errorf("unsupported source: %s", opts.Source)
+	}
+	return opts, nil
+}
+
+func runInitFirecracker(opts initFirecrackerCLIOptions) error {
+	source := opts.Source
+	if source == "" {
+		if !isInteractiveTerminal(os.Stdin) {
+			return errors.New("source is required in non-interactive mode; use --source official or --source custom")
+		}
+		selected, err := promptInitFirecrackerSource()
+		if err != nil {
+			return err
+		}
+		source = selected
+	}
+
+	switch source {
+	case "official":
+		if !opts.Yes && isInteractiveTerminal(os.Stdin) {
+			ok, err := promptConfirm(fmt.Sprintf("download AIR official Firecracker image bundle to %s", resolvedInitDir(opts.Dir)))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("init cancelled")
+			}
+		}
+		return installOfficialFirecrackerBundle(resolvedInitDir(opts.Dir))
+	case "custom":
+		fmt.Fprintln(os.Stdout, install.BuildCustomInstallGuide(resolvedInitDir(opts.Dir)))
+		fmt.Fprintln(os.Stdout, "参考仓库文档：docs/firecracker-deployment-guide.md")
+		return nil
+	default:
+		return fmt.Errorf("unsupported source: %s", source)
+	}
+}
+
+func resolvedInitDir(dir string) string {
+	if dir != "" {
+		return dir
+	}
+	return install.DefaultFirecrackerInstallDir()
+}
+
+func installOfficialFirecrackerBundle(outputDir string) error {
+	version := install.CurrentVersion()
+	fmt.Fprintf(os.Stdout, "downloading AIR official Firecracker bundle for %s to %s\n", version, outputDir)
+	if version == "" {
+		return errors.New("unable to determine AIR version for official bundle download")
+	}
+	ctx := context.Background()
+	installedDir, err := install.DownloadOfficialFirecrackerBundle(ctx, version, outputDir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "installed Firecracker assets to %s\n", installedDir)
+
+	cfg := vm.ResolveConfig("runtime/sessions")
+	cfg.Provider = "firecracker"
+	report := vm.Diagnose(cfg)
+	printDoctorHuman(report)
+	if !report.Ready {
+		return errors.New("firecracker assets downloaded, but runtime doctor still reports missing dependencies")
+	}
+	return nil
+}
+
+func promptInitFirecrackerSource() (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprintln(os.Stdout, "Firecracker 运行环境初始化方式：")
+	fmt.Fprintln(os.Stdout, "  1) 下载 AIR 官方镜像包（推荐）")
+	fmt.Fprintln(os.Stdout, "  2) 我自己部署 Firecracker / kernel / rootfs")
+	fmt.Fprint(os.Stdout, "请选择 [1/2]: ")
+
+	choice, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	switch strings.TrimSpace(choice) {
+	case "1":
+		return "official", nil
+	case "2":
+		return "custom", nil
+	default:
+		return "", fmt.Errorf("unsupported selection: %s", strings.TrimSpace(choice))
+	}
+}
+
+func promptConfirm(message string) (bool, error) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprintf(os.Stdout, "%s? [y/N]: ", message)
+	answer, err := reader.ReadString('\n')
+	if err != nil {
+		return false, err
+	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	return answer == "y" || answer == "yes", nil
+}
+
+func isInteractiveTerminal(file *os.File) bool {
+	if file == nil {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+func printDoctorHuman(report *vm.DoctorReport) {
+	if report == nil {
+		return
+	}
+
+	fmt.Fprintf(os.Stdout, "provider=%s ready=%t\n", report.Provider, report.Ready)
+	if report.Provider == "firecracker" {
+		fmt.Fprintf(os.Stdout, "firecracker_binary=%s\n", report.ResolvedConfig.FirecrackerBinary)
+		fmt.Fprintf(os.Stdout, "kernel_image=%s\n", report.ResolvedConfig.KernelImage)
+		fmt.Fprintf(os.Stdout, "rootfs_image=%s\n", report.ResolvedConfig.RootfsImage)
+		fmt.Fprintf(os.Stdout, "kvm_device=%s\n", report.ResolvedConfig.KVMDevice)
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "CHECK\tSTATUS\tVALUE\tMESSAGE")
+	for _, check := range report.Checks {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+			check.Name,
+			strings.ToUpper(check.Status),
+			check.Value,
+			check.Message,
+		)
+	}
+	_ = w.Flush()
+
+	for _, check := range report.Checks {
+		if check.Hint == "" {
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "hint[%s]=%s\n", check.Name, check.Hint)
+	}
+}
+
+func firecrackerDoctorHint(err error) string {
+	switch {
+	case errors.Is(err, vm.ErrFirecrackerBinaryNotFound),
+		errors.Is(err, vm.ErrFirecrackerKernelRequired),
+		errors.Is(err, vm.ErrFirecrackerKernelNotFound),
+		errors.Is(err, vm.ErrFirecrackerRootfsRequired),
+		errors.Is(err, vm.ErrFirecrackerRootfsNotFound),
+		errors.Is(err, vm.ErrKVMDeviceNotAvailable):
+		return "run `air init firecracker` or `air doctor --provider firecracker --human` to inspect runtime dependencies"
+	default:
+		return ""
+	}
 }
 
 func streamFile(path string, follow bool, tailLines int) error {

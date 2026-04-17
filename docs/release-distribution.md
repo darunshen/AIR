@@ -26,6 +26,8 @@
 
 - `air_<version>_linux_amd64.tar.gz`
 - `air_<version>_linux_arm64.tar.gz`
+- `air_firecracker_linux_amd64.tar.gz`
+- `air_firecracker_linux_arm64.tar.gz`
 - `air_<version>_darwin_amd64.tar.gz`
 - `air_<version>_darwin_arm64.tar.gz`
 - `air_<version>_windows_amd64.zip`
@@ -100,6 +102,35 @@ sudo dpkg -i air_<version>_amd64.deb
 - `/usr/bin/air-agent`
 - `/usr/share/doc/air/README.md`
 - `/usr/share/doc/air/LICENSE`
+
+当前 `.deb` 不包含：
+
+- `firecracker` 二进制
+- `vmlinux`
+- `rootfs.ext4`
+
+因此这个 `.deb` 目前是 AIR CLI 包，不是“安装后立即可跑 Firecracker”的完整运行时包。
+
+安装后如果要检查 Firecracker 依赖，执行：
+
+```bash
+air init firecracker
+air doctor --provider firecracker --human
+```
+
+如果后续把 Firecracker 资产放到以下目录之一，AIR 会自动发现：
+
+- `./assets/firecracker/`
+- `/usr/lib/air/firecracker/`
+- `/usr/local/lib/air/firecracker/`
+- `~/.local/share/air/firecracker/`
+
+其中 `air init firecracker` 会先交互询问：
+
+- 下载 AIR 官方 Firecracker 镜像包
+- 或者由用户自行部署 Firecracker / kernel / rootfs
+
+如果选择官方镜像，AIR 会下载当前版本对应的官方 bundle 到自动发现目录。
 
 ## 6. apt 仓库目录
 

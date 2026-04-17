@@ -29,7 +29,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 OUTPUT_DIR="${1:-assets/firecracker}"
-ARCH="$(uname -m)"
+ARCH="${AIR_FIRECRACKER_ARCH:-$(uname -m)}"
 
 case "${ARCH}" in
   x86_64|aarch64)

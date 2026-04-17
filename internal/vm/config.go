@@ -6,15 +6,17 @@ import (
 )
 
 const (
-	defaultRuntimeRoot                = "runtime/sessions"
-	defaultFirecrackerBinary          = "firecracker"
-	defaultFirecrackerAssetDir        = "assets/firecracker"
-	defaultBundledKernelImage         = "hello-vmlinux.bin"
-	defaultBundledRootfsImage         = "hello-rootfs.ext4"
-	defaultBundledPatchedRootfsImage  = "hello-rootfs-air.ext4"
-	defaultBundledFirecracker         = "firecracker"
-	defaultKVMDevice                  = "/dev/kvm"
-	defaultVSockCIDBase        uint32 = 100
+	defaultRuntimeRoot                      = "runtime/sessions"
+	defaultFirecrackerBinary                = "firecracker"
+	defaultFirecrackerAssetDir              = "assets/firecracker"
+	defaultInstalledFirecrackerDir          = "/usr/lib/air/firecracker"
+	defaultLocalFirecrackerDir              = "/usr/local/lib/air/firecracker"
+	defaultBundledKernelImage               = "hello-vmlinux.bin"
+	defaultBundledRootfsImage               = "hello-rootfs.ext4"
+	defaultBundledPatchedRootfsImage        = "hello-rootfs-air.ext4"
+	defaultBundledFirecracker               = "firecracker"
+	defaultKVMDevice                        = "/dev/kvm"
+	defaultVSockCIDBase              uint32 = 100
 )
 
 func ResolveConfig(root string) Config {
@@ -59,13 +61,40 @@ func resolveFirecrackerRootfs(cwd string) string {
 }
 
 func bundledFirecrackerAsset(cwd, name string) string {
-	if cwd == "" {
-		return ""
+	for _, dir := range firecrackerAssetDirs(cwd) {
+		path := filepath.Join(dir, name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+func firecrackerAssetDirs(cwd string) []string {
+	candidates := make([]string, 0, 4)
+	seen := map[string]struct{}{}
+	appendCandidate := func(path string) {
+		if path == "" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		candidates = append(candidates, path)
 	}
 
-	path := filepath.Join(cwd, defaultFirecrackerAssetDir, name)
-	if _, err := os.Stat(path); err != nil {
-		return ""
+	if cwd != "" {
+		appendCandidate(filepath.Join(cwd, defaultFirecrackerAssetDir))
 	}
-	return path
+	if exe, err := os.Executable(); err == nil {
+		appendCandidate(filepath.Join(filepath.Dir(exe), "..", "lib", "air", "firecracker"))
+	}
+	appendCandidate(defaultInstalledFirecrackerDir)
+	appendCandidate(defaultLocalFirecrackerDir)
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		appendCandidate(filepath.Join(home, ".local", "share", "air", "firecracker"))
+	}
+
+	return candidates
 }

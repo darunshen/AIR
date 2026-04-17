@@ -94,6 +94,15 @@
 
 如果缺少这些条件，AIR 会在启动前直接报错。
 
+建议先执行：
+
+```bash
+air init firecracker
+air doctor --provider firecracker --human
+```
+
+如果你使用的是 `.deb` 安装包，需要注意当前包只安装 `air` / `air-agent` CLI，不会附带 Firecracker、`vmlinux`、`rootfs.ext4`。
+
 更细的宿主机准备步骤见：
 
 - [Firecracker 真机部署指南](firecracker-deployment-guide.md)
@@ -116,6 +125,8 @@ go build ./cmd/air
 
 ```bash
 go run ./cmd/air run -- echo hello
+go run ./cmd/air init firecracker --source custom
+go run ./cmd/air doctor --provider firecracker --human
 go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
 go run ./examples/agent-runner --task all
 go run ./examples/agent-runner --planner deepseek --model deepseek-chat --task all
@@ -207,6 +218,20 @@ go run ./cmd/air session events <session_id> --follow
 ## 5. Firecracker 模式操作
 
 ### 5.1 环境变量
+
+如果想先确认当前机器是否具备 Firecracker 运行条件，先执行：
+
+```bash
+go run ./cmd/air init firecracker
+go run ./cmd/air doctor --provider firecracker --human
+```
+
+`air init firecracker` 会先询问：
+
+- 是否下载 AIR 官方镜像包
+- 还是用户自己部署 Firecracker 资产
+
+如果选择 AIR 官方镜像，命令会下载当前 AIR 版本对应的官方 bundle。
 
 切换到 `firecracker` provider 前，至少需要设置：
 
