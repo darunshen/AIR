@@ -7,6 +7,7 @@
 - 决定下一步动作
 - 在隔离环境里执行命令
 - 读取 stdout / stderr / exit_code / timeout / request_id
+- 可选传入 `--memory-mib` / `--vcpu-count`
 - 根据结果继续下一步
 
 ## 1. 使用模式
@@ -196,6 +197,7 @@ go run ./examples/agent-runner --planner scripted --task all
 
 1. planner 决定下一步 shell command
 2. 如果是一次性任务，调用 `air run`
+   必要时附带 `--timeout`、`--memory-mib`、`--vcpu-count`
 3. 如果是多步任务，调用 `air session create`
 4. 多次调用 `air session exec`
 5. 读取结构化结果
@@ -208,6 +210,7 @@ go run ./examples/agent-runner --planner scripted --task all
 - 真正的 LLM planner
 - 真正的隔离执行
 - one-shot / session / recovery / test-and-fix
+- `air run` 已支持稳定 `error_type`
 - OpenAI / DeepSeek / scripted 三类 planner
 
 当前还没有：

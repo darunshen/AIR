@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,21 +23,29 @@ type ExecResult struct {
 }
 
 type RunOptions struct {
-	Provider string
-	Timeout  time.Duration
+	Provider  string
+	Timeout   time.Duration
+	MemoryMiB int
+	VCPUCount int
 }
 
 type RunResult struct {
-	SessionID    string `json:"session_id,omitempty"`
-	Provider     string `json:"provider"`
-	RequestID    string `json:"request_id,omitempty"`
-	Stdout       string `json:"stdout"`
-	Stderr       string `json:"stderr"`
-	ExitCode     int    `json:"exit_code"`
-	DurationMS   int64  `json:"duration_ms"`
-	Timeout      bool   `json:"timeout"`
-	ErrorType    string `json:"error_type,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
+	SessionID    string       `json:"session_id,omitempty"`
+	Provider     string       `json:"provider"`
+	RequestID    string       `json:"request_id,omitempty"`
+	Stdout       string       `json:"stdout"`
+	Stderr       string       `json:"stderr"`
+	ExitCode     int          `json:"exit_code"`
+	DurationMS   int64        `json:"duration_ms"`
+	Timeout      bool         `json:"timeout"`
+	ErrorType    RunErrorType `json:"error_type,omitempty"`
+	ErrorMessage string       `json:"error_message,omitempty"`
+}
+
+type CreateOptions struct {
+	Provider  string
+	MemoryMiB int
+	VCPUCount int
 }
 
 type Manager struct {
@@ -77,7 +86,11 @@ func (m *Manager) Create() (*model.Session, error) {
 }
 
 func (m *Manager) CreateWithProvider(provider string) (*model.Session, error) {
-	runtime, resolvedProvider, err := m.runtimeForProvider(provider)
+	return m.CreateWithOptions(CreateOptions{Provider: provider})
+}
+
+func (m *Manager) CreateWithOptions(opts CreateOptions) (*model.Session, error) {
+	runtime, resolvedProvider, err := m.runtimeForCreateOptions(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -159,17 +172,27 @@ func (m *Manager) ExecWithTimeout(sessionID, command string, timeout time.Durati
 }
 
 func (m *Manager) Run(command string, opts RunOptions) (*RunResult, error) {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-
 	result := &RunResult{
 		Provider: m.resolveProvider(opts.Provider),
 		ExitCode: -1,
 	}
 
-	s, err := m.CreateWithProvider(opts.Provider)
+	if err := validateRunOptions(opts); err != nil {
+		result.ErrorType = RunErrorTypeInvalidArgument
+		result.ErrorMessage = err.Error()
+		return result, err
+	}
+
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
+	s, err := m.CreateWithOptions(CreateOptions{
+		Provider:  opts.Provider,
+		MemoryMiB: opts.MemoryMiB,
+		VCPUCount: opts.VCPUCount,
+	})
 	if err != nil {
 		result.ErrorType = classifyRunErrorType("create", err)
 		result.ErrorMessage = err.Error()
@@ -187,9 +210,13 @@ func (m *Manager) Run(command string, opts RunOptions) (*RunResult, error) {
 		result.ExitCode = execResult.ExitCode
 		result.DurationMS = execResult.Duration.Milliseconds()
 		result.Timeout = execResult.TimedOut
-		if execResult.TimedOut {
-			result.ErrorType = "timeout"
+		switch {
+		case execResult.TimedOut:
+			result.ErrorType = RunErrorTypeTimeout
 			result.ErrorMessage = "command timed out"
+		case execResult.ExitCode != 0:
+			result.ErrorType = RunErrorTypeExec
+			result.ErrorMessage = fmt.Sprintf("command exited with code %d", execResult.ExitCode)
 		}
 	} else {
 		result.ErrorType = classifyRunErrorType("exec", execErr)
@@ -352,19 +379,19 @@ func (m *Manager) resolveProvider(provider string) string {
 	return m.provider
 }
 
-func classifyRunErrorType(stage string, err error) string {
+func classifyRunErrorType(stage string, err error) RunErrorType {
 	switch stage {
 	case "create":
-		return "startup_error"
+		return RunErrorTypeStartup
 	case "exec":
 		if errors.Is(err, vm.ErrGuestAgentNotReady) {
-			return "transport_error"
+			return RunErrorTypeTransport
 		}
-		return "exec_error"
+		return RunErrorTypeExec
 	case "delete":
-		return "cleanup_error"
+		return RunErrorTypeCleanup
 	default:
-		return "runtime_error"
+		return RunErrorTypeExec
 	}
 }
 
@@ -383,21 +410,52 @@ func (m *Manager) syncSessionState(s *model.Session, info *vm.InspectInfo) error
 }
 
 func (m *Manager) runtimeForProvider(provider string) (vm.Runtime, string, error) {
-	resolvedProvider := provider
-	if resolvedProvider == "" {
-		resolvedProvider = m.provider
-	}
-	if resolvedProvider == m.provider {
+	return m.runtimeForCreateOptions(CreateOptions{Provider: provider})
+}
+
+func (m *Manager) runtimeForCreateOptions(opts CreateOptions) (vm.Runtime, string, error) {
+	cfg, resolvedProvider := m.configForCreateOptions(opts)
+	if resolvedProvider == m.provider &&
+		cfg.MemoryMiB == m.runtimeConfig.MemoryMiB &&
+		cfg.VCPUCount == m.runtimeConfig.VCPUCount {
 		return m.vm, resolvedProvider, nil
 	}
-
-	cfg := m.runtimeConfig
-	cfg.Root = m.runtimeRoot
-	cfg.Provider = resolvedProvider
 
 	runtime, err := vm.NewWithConfig(cfg)
 	if err != nil {
 		return nil, "", err
 	}
 	return runtime, resolvedProvider, nil
+}
+
+func (m *Manager) configForCreateOptions(opts CreateOptions) (vm.Config, string) {
+	cfg := m.runtimeConfig
+	cfg.Root = m.runtimeRoot
+
+	resolvedProvider := opts.Provider
+	if resolvedProvider == "" {
+		resolvedProvider = m.provider
+	}
+	cfg.Provider = resolvedProvider
+	if opts.MemoryMiB > 0 {
+		cfg.MemoryMiB = opts.MemoryMiB
+	}
+	if opts.VCPUCount > 0 {
+		cfg.VCPUCount = opts.VCPUCount
+	}
+
+	return cfg, resolvedProvider
+}
+
+func validateRunOptions(opts RunOptions) error {
+	if opts.Timeout < 0 {
+		return errors.New("timeout must be greater than 0")
+	}
+	if opts.MemoryMiB < 0 {
+		return errors.New("memory-mib must be greater than 0")
+	}
+	if opts.VCPUCount < 0 {
+		return errors.New("vcpu-count must be greater than 0")
+	}
+	return nil
 }

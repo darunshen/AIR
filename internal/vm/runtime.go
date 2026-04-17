@@ -48,6 +48,8 @@ type Config struct {
 	KernelImage       string
 	RootfsImage       string
 	KVMDevice         string
+	MemoryMiB         int
+	VCPUCount         int
 	VSockCIDBase      uint32
 }
 
@@ -72,6 +74,12 @@ func NewWithConfig(cfg Config) (Runtime, error) {
 	}
 	if cfg.KVMDevice == "" {
 		cfg.KVMDevice = defaultKVMDevice
+	}
+	if cfg.MemoryMiB <= 0 {
+		cfg.MemoryMiB = defaultFirecrackerMemoryMiB
+	}
+	if cfg.VCPUCount <= 0 {
+		cfg.VCPUCount = defaultFirecrackerVCPUCount
 	}
 
 	if err := os.MkdirAll(cfg.Root, 0o755); err != nil {

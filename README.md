@@ -279,7 +279,7 @@ Current implementation note:
 - Firecracker bootstrapping, guest `air-agent`, and host/guest `vsock exec` are wired end to end
 - Firecracker now uses a per-session writable rootfs image copied from the configured base rootfs
 - `air session list` / `inspect` / `console` / `events` are available for basic debugging
-- `air run` supports `--provider`, `--timeout`, and structured JSON output for agent consumption
+- `air run` supports `--provider`, `--timeout`, `--memory-mib`, `--vcpu-count`, and structured JSON output for agent consumption
 - `examples/agent-runner` now supports OpenAI and DeepSeek planners, with `scripted` as an offline fallback
 - `docs/agent-selection.md` now records the first external LLM integration decision and environment template
 - `scripts/prepare-firecracker-rootfs.sh` rebuilds the demo rootfs with `air-agent` baked in and enabled through OpenRC `local.d`
@@ -329,7 +329,7 @@ Debugging commands:
 
 - `air init firecracker`
 - `air doctor --provider firecracker --human`
-- `air run [--provider ...] [--timeout 30s] -- <command>`
+- `air run [--provider ...] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] -- <command>`
 - `go run ./examples/agent-runner --task all`
 - `go run ./examples/agent-runner --planner deepseek --model deepseek-chat --task all`
 - `go run ./examples/agent-runner --planner scripted --task all`

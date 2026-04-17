@@ -28,6 +28,8 @@
 - 返回结构化结果
 - 自动销毁临时 session
 - 支持 `--timeout`
+- 支持 `--memory-mib`
+- 支持 `--vcpu-count`
 
 仓库还提供了一个最小 reference agent：
 
@@ -125,6 +127,7 @@ go build ./cmd/air
 
 ```bash
 go run ./cmd/air run -- echo hello
+go run ./cmd/air run --memory-mib 512 --vcpu-count 2 -- echo hello
 go run ./cmd/air init firecracker --source custom
 go run ./cmd/air doctor --provider firecracker --human
 go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
@@ -144,8 +147,16 @@ go run ./cmd/air session create --provider firecracker
 
 ```bash
 go run ./cmd/air run -- echo hello
+go run ./cmd/air run --memory-mib 512 --vcpu-count 2 -- echo hello
 go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
 ```
+
+其中：
+
+- `--timeout` 控制单次执行超时
+- `--memory-mib` 控制 Firecracker VM 内存上限
+- `--vcpu-count` 控制 Firecracker VM vCPU 数
+- `local` provider 当前会接受这两个参数，但不会真的做 CPU/内存隔离
 
 默认输出为结构化 JSON，字段包括：
 
@@ -157,6 +168,21 @@ go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
 - `timeout`
 - `error_type`
 - `error_message`
+
+当前 `error_type` 的稳定取值包括：
+
+- `invalid_argument`
+- `startup_error`
+- `transport_error`
+- `exec_error`
+- `timeout`
+- `cleanup_error`
+
+其中：
+
+- 命令非零退出时会返回 `exec_error`
+- 超时时会返回 `timeout`
+- Firecracker 启动前环境问题通常返回 `startup_error`
 
 如果想使用更适合人工查看的输出，可加：
 

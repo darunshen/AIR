@@ -16,6 +16,8 @@ const (
 	defaultBundledPatchedRootfsImage        = "hello-rootfs-air.ext4"
 	defaultBundledFirecracker               = "firecracker"
 	defaultKVMDevice                        = "/dev/kvm"
+	defaultFirecrackerMemoryMiB             = 256
+	defaultFirecrackerVCPUCount             = 1
 	defaultVSockCIDBase              uint32 = 100
 )
 
@@ -29,6 +31,8 @@ func ResolveConfig(root string) Config {
 		KernelImage:       resolveFirecrackerKernel(cwd),
 		RootfsImage:       resolveFirecrackerRootfs(cwd),
 		KVMDevice:         getenvDefault("AIR_KVM_DEVICE", defaultKVMDevice),
+		MemoryMiB:         defaultFirecrackerMemoryMiB,
+		VCPUCount:         defaultFirecrackerVCPUCount,
 		VSockCIDBase:      defaultVSockCIDBase,
 	}
 }

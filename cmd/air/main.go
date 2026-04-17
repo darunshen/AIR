@@ -78,8 +78,10 @@ func main() {
 			exitErr(err)
 		}
 		result, runErr := manager.Run(command, session.RunOptions{
-			Provider: opts.Provider,
-			Timeout:  opts.Timeout,
+			Provider:  opts.Provider,
+			Timeout:   opts.Timeout,
+			MemoryMiB: opts.MemoryMiB,
+			VCPUCount: opts.VCPUCount,
 		})
 		if opts.Human {
 			printRunHuman(result)
@@ -220,7 +222,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air version")
 	fmt.Fprintln(os.Stderr, "  air init firecracker [--source official|custom] [--dir PATH] [--yes]")
 	fmt.Fprintln(os.Stderr, "  air doctor [--provider local|firecracker] [--human]")
-	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--timeout 30s] [--human] -- <command>")
+	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--human] -- <command>")
 	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker]")
 	fmt.Fprintln(os.Stderr, "  air session list")
 	fmt.Fprintln(os.Stderr, "  air session inspect <id>")
@@ -606,9 +608,11 @@ func parseProviderFlag(args []string) (string, error) {
 }
 
 type runCLIOptions struct {
-	Provider string
-	Timeout  time.Duration
-	Human    bool
+	Provider  string
+	Timeout   time.Duration
+	MemoryMiB int
+	VCPUCount int
+	Human     bool
 }
 
 func parseRunFlags(args []string) (runCLIOptions, string, error) {
@@ -652,6 +656,38 @@ func parseRunFlags(args []string) (runCLIOptions, string, error) {
 				return runCLIOptions{}, "", fmt.Errorf("invalid timeout: %w", err)
 			}
 			opts.Timeout = value
+		case arg == "--memory-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return runCLIOptions{}, "", errors.New("memory-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return runCLIOptions{}, "", errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+			i++
+		case strings.HasPrefix(arg, "--memory-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--memory-mib="))
+			if err != nil || value <= 0 {
+				return runCLIOptions{}, "", errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+		case arg == "--vcpu-count":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return runCLIOptions{}, "", errors.New("vcpu-count must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return runCLIOptions{}, "", errors.New("vcpu-count must be a positive integer")
+			}
+			opts.VCPUCount = value
+			i++
+		case strings.HasPrefix(arg, "--vcpu-count="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--vcpu-count="))
+			if err != nil || value <= 0 {
+				return runCLIOptions{}, "", errors.New("vcpu-count must be a positive integer")
+			}
+			opts.VCPUCount = value
 		default:
 			commandArgs = append(commandArgs, args[i:]...)
 			i = len(args)
@@ -660,7 +696,7 @@ func parseRunFlags(args []string) (runCLIOptions, string, error) {
 
 	command := strings.TrimSpace(strings.Join(commandArgs, " "))
 	if command == "" {
-		return runCLIOptions{}, "", errors.New("usage: air run [--provider local|firecracker] [--timeout 30s] [--human] -- <command>")
+		return runCLIOptions{}, "", errors.New("usage: air run [--provider local|firecracker] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--human] -- <command>")
 	}
 	if opts.Timeout <= 0 {
 		return runCLIOptions{}, "", errors.New("timeout must be greater than 0")
@@ -684,7 +720,7 @@ func printRunHuman(result *session.RunResult) {
 		result.DurationMS,
 		result.Timeout,
 	)
-	if result.ErrorType != "" && result.ErrorType != "timeout" {
+	if result.ErrorType != "" && result.ErrorType != session.RunErrorTypeTimeout {
 		fmt.Fprintf(os.Stderr, "error_type=%s error_message=%s\n", result.ErrorType, result.ErrorMessage)
 	}
 }

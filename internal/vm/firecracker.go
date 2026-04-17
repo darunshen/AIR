@@ -26,6 +26,8 @@ type firecrackerRuntime struct {
 	kernelImage       string
 	rootfsImage       string
 	kvmDevice         string
+	memoryMiB         int
+	vcpuCount         int
 	vsockCIDBase      uint32
 	startupTimeout    time.Duration
 	guestReadyTimeout time.Duration
@@ -87,6 +89,8 @@ func newFirecrackerRuntime(cfg Config) (Runtime, error) {
 		kernelImage:       cfg.KernelImage,
 		rootfsImage:       cfg.RootfsImage,
 		kvmDevice:         cfg.KVMDevice,
+		memoryMiB:         cfg.MemoryMiB,
+		vcpuCount:         cfg.VCPUCount,
 		vsockCIDBase:      cfg.VSockCIDBase,
 		startupTimeout:    5 * time.Second,
 		guestReadyTimeout: 10 * time.Second,
@@ -506,8 +510,8 @@ type firecrackerPayloads struct {
 func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) firecrackerPayloads {
 	return firecrackerPayloads{
 		machineConfig: firecrackerMachineConfig{
-			VCPUCount:  1,
-			MemSizeMiB: 256,
+			VCPUCount:  r.vcpuCount,
+			MemSizeMiB: r.memoryMiB,
 			Smt:        false,
 		},
 		bootSource: firecrackerBootSource{
