@@ -43,6 +43,10 @@
 - [AI Agent 选型与接入方案](agent-selection.md)
 - [通过 AI Agent 使用 AIR](ai-agent-usage.md)
 
+关于安装包、GitHub Release 和 `.deb` 交付，见：
+
+- [发布与安装包交付](release-distribution.md)
+
 `firecracker` provider 已经具备：
 
 - 启动前环境预检

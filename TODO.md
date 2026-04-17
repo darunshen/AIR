@@ -107,6 +107,16 @@
   - DeepSeek planner 已验证通过
   - finish 后会做一次额外测试校验
 
+- 发布与安装包基线已接入
+  - 已支持 `air version`
+  - 已支持 `air-agent --version`
+  - 已新增 release 打包脚本
+  - 已支持 GitHub Release 归档产物
+  - 已支持 `.deb` 打包
+  - 已支持 apt repo 目录产物构建
+  - 已新增 GitHub Actions release workflow
+  - 已新增 `docs/release-distribution.md`
+
 ## Priority Rule
 
 - 优先级判断标准调整为：先打通 AI agent 真实工作流，再补底层工程化

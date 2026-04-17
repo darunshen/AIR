@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/darunshen/AIR/internal/agent"
+	"github.com/darunshen/AIR/internal/buildinfo"
 	"github.com/darunshen/AIR/internal/guestapi"
 )
 
@@ -16,7 +17,13 @@ func main() {
 	network := flag.String("network", "unix", "listener network: unix, tcp, or vsock")
 	address := flag.String("address", "/run/air-agent.sock", "listener address")
 	port := flag.Uint("port", guestapi.DefaultVSockPort, "vsock port when --network=vsock")
+	version := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *version {
+		fmt.Println(buildinfo.String())
+		return
+	}
 
 	listener, err := agent.Listen(*network, *address, uint32(*port))
 	if err != nil {
