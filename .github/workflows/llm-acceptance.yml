@@ -1,0 +1,86 @@
+name: llm-acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      planner:
+        description: "Planner provider"
+        required: true
+        default: "deepseek"
+        type: choice
+        options:
+          - deepseek
+          - openai
+      model:
+        description: "Planner model"
+        required: true
+        default: "deepseek-chat"
+      escalation_model:
+        description: "Planner escalation model"
+        required: false
+        default: "deepseek-reasoner"
+      planner_retries:
+        description: "Planner retries before escalation"
+        required: true
+        default: "1"
+      tasks:
+        description: "Comma-separated task list"
+        required: true
+        default: "run-smoke,session-workflow,test-and-fix"
+      runtime_provider:
+        description: "AIR runtime provider"
+        required: true
+        default: "local"
+        type: choice
+        options:
+          - local
+          - firecracker
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Validate planner secret
+        env:
+          PLANNER: ${{ inputs.planner }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          set -euo pipefail
+          case "${PLANNER}" in
+            openai)
+              test -n "${OPENAI_API_KEY}" || { echo "missing OPENAI_API_KEY secret" >&2; exit 1; }
+              ;;
+            deepseek)
+              test -n "${DEEPSEEK_API_KEY}" || { echo "missing DEEPSEEK_API_KEY secret" >&2; exit 1; }
+              ;;
+            *)
+              echo "unsupported planner: ${PLANNER}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Run real LLM acceptance test
+        env:
+          AIR_LLM_ACCEPTANCE: "1"
+          AIR_AGENT_PROVIDER: ${{ inputs.planner }}
+          AIR_AGENT_MODEL: ${{ inputs.model }}
+          AIR_AGENT_ESCALATION_MODEL: ${{ inputs.escalation_model }}
+          AIR_AGENT_PLANNER_RETRIES: ${{ inputs.planner_retries }}
+          AIR_AGENT_ACCEPTANCE_TASKS: ${{ inputs.tasks }}
+          AIR_AGENT_RUNTIME_PROVIDER: ${{ inputs.runtime_provider }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v

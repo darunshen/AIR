@@ -24,13 +24,24 @@
 go test ./examples/agent-runner -run TestScriptedAgentWorkflowAcceptance
 ```
 
+真实 LLM 验收也支持 `go test` 入口，但默认会跳过，只有在显式设置环境变量时才执行：
+
+```bash
+AIR_LLM_ACCEPTANCE=1 \
+AIR_AGENT_PROVIDER=deepseek \
+AIR_AGENT_MODEL=deepseek-chat \
+AIR_AGENT_ESCALATION_MODEL=deepseek-reasoner \
+DEEPSEEK_API_KEY_FILE=~/tmp/deepseek.api \
+go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
+```
+
 以及一个可重复执行的验收脚本：
 
 ```bash
 scripts/run-agent-acceptance.sh --planner scripted --task all
 ```
 
-真实模型结果记录见 `docs/llm-acceptance-results.md`。
+真实模型结果记录见 `docs/llm-acceptance-results.md`，GitHub Actions 也提供了手动触发的 `llm-acceptance` workflow。
 
 ## 运行方式
 

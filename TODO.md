@@ -120,6 +120,12 @@
   - 每次执行会落盘 `command.txt`、`metadata.txt`、`result.json`
   - 已新增 `docs/llm-acceptance-results.md` 记录真实验收快照
 
+- 真实 LLM 验收测试入口已接入
+  - 已新增 gated `go test`：`TestRealLLMAgentWorkflowAcceptance`
+  - 默认跳过，不影响常规 `go test ./...`
+  - 已支持通过 `AIR_LLM_ACCEPTANCE=1` 和相关环境变量显式启用
+  - 已新增手动触发的 GitHub Actions workflow：`llm-acceptance`
+
 - 发布与安装包基线已接入
   - 已支持 `air version`
   - 已支持 `air-agent --version`

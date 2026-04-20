@@ -133,6 +133,22 @@ scripts/run-agent-acceptance.sh --planner scripted --task all
 
 真实模型验收快照见 `docs/llm-acceptance-results.md`。
 
+### 4.6 使用 gated `go test`
+
+如果你想把真实模型验收接到本地自动化或 CI，可以直接跑：
+
+```bash
+AIR_LLM_ACCEPTANCE=1 \
+AIR_AGENT_PROVIDER=deepseek \
+AIR_AGENT_MODEL=deepseek-chat \
+AIR_AGENT_ESCALATION_MODEL=deepseek-reasoner \
+AIR_AGENT_ACCEPTANCE_TASKS=run-smoke,session-workflow,test-and-fix \
+DEEPSEEK_API_KEY_FILE=~/tmp/deepseek.api \
+go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
+```
+
+默认情况下这个测试会跳过，不会影响常规 `go test ./...`。
+
 ## 5. 当前内置任务
 
 ### 5.1 `run-smoke`

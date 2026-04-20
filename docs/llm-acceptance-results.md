@@ -12,6 +12,18 @@
 scripts/run-agent-acceptance.sh --planner scripted --task all
 ```
 
+也支持受环境变量控制的 `go test` 入口：
+
+```bash
+AIR_LLM_ACCEPTANCE=1 \
+AIR_AGENT_PROVIDER=deepseek \
+AIR_AGENT_MODEL=deepseek-chat \
+AIR_AGENT_ESCALATION_MODEL=deepseek-reasoner \
+AIR_AGENT_ACCEPTANCE_TASKS=run-smoke,session-workflow,test-and-fix \
+DEEPSEEK_API_KEY_FILE=~/tmp/deepseek.api \
+go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
+```
+
 真实模型可用：
 
 ```bash
@@ -39,6 +51,8 @@ scripts/run-agent-acceptance.sh \
 - `command.txt`
 - `metadata.txt`
 - `result.json`
+
+仓库还提供了一个手动触发的 GitHub Actions workflow：`.github/workflows/llm-acceptance.yml`。
 
 ## 2. 2026-04-20 验收快照
 
