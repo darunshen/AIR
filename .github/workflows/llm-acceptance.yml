@@ -158,15 +158,16 @@ jobs:
           AIR_AGENT_PLANNER_RETRIES: ${{ inputs.planner_retries }}
           AIR_AGENT_ACCEPTANCE_TASKS: ${{ inputs.tasks }}
           AIR_AGENT_RUNTIME_PROVIDER: ${{ inputs.runtime_provider }}
+          AIR_AGENT_ACCEPTANCE_ARTIFACT_DIR: artifacts/github-actions/llm-acceptance
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
-          mkdir -p artifacts/github-actions
-          go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v | tee artifacts/github-actions/llm-acceptance.log
+          mkdir -p artifacts/github-actions/llm-acceptance
+          go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v | tee artifacts/github-actions/llm-acceptance/llm-acceptance.log
 
       - name: Upload acceptance log
         if: ${{ inputs.upload_artifact && steps.planner-secret.outputs.available == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: llm-acceptance-${{ inputs.planner }}-${{ inputs.runtime_provider }}
-          path: artifacts/github-actions/llm-acceptance.log
+          path: artifacts/github-actions/llm-acceptance/

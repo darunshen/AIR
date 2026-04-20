@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,20 @@ func TestRealLLMAgentWorkflowAcceptance(t *testing.T) {
 	r := newAcceptanceRunner(t, cfg, provider)
 
 	selected := resolveAcceptanceTasks(t)
+	result := report{
+		StartedAt:       time.Now().UTC(),
+		Planner:         r.plannerName,
+		Model:           plannerModel(r.plannerName, r.model),
+		EscalationModel: plannerModel(r.plannerName, r.escalationModel),
+		PlannerRetries:  r.plannerRetries,
+		Provider:        resolvedProvider(provider),
+		Task:            strings.Join(selected, ","),
+		Success:         true,
+	}
+	defer func() {
+		writeAcceptanceArtifact(t, result)
+	}()
+
 	available := map[string]acceptanceCase{}
 	for _, tt := range acceptanceCases() {
 		available[tt.name] = tt
@@ -52,9 +67,23 @@ func TestRealLLMAgentWorkflowAcceptance(t *testing.T) {
 		if !ok {
 			t.Fatalf("unsupported acceptance task %q", name)
 		}
-		t.Run(tt.name, func(t *testing.T) {
-			runAndAssertAcceptanceTask(t, r, tt)
+		passed := t.Run(tt.name, func(t *testing.T) {
+			taskResult, err := runAcceptanceTask(r, tt.name)
+			result.Tasks = append(result.Tasks, taskResult)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !taskResult.Success {
+				t.Fatalf("task %s failed: %+v", tt.name, taskResult)
+			}
+			tt.assert(t, taskResult)
 		})
+		if !passed {
+			result.Success = false
+		}
+	}
+	if len(result.Tasks) != len(selected) {
+		result.Success = false
 	}
 }
 
@@ -178,23 +207,45 @@ func acceptanceCases() []acceptanceCase {
 func runAndAssertAcceptanceTask(t *testing.T, r *runner, tt acceptanceCase) {
 	t.Helper()
 
-	results, err := r.runSelected(context.Background(), tt.name)
+	result, err := runAcceptanceTask(r, tt.name)
 	if err != nil {
 		t.Fatalf("run selected %s: %v", tt.name, err)
 	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 task result, got %d", len(results))
-	}
-
-	result := results[0]
 	if !result.Success {
 		t.Fatalf("task %s failed: %+v", tt.name, result)
 	}
-	if len(result.Steps) == 0 {
-		t.Fatalf("task %s returned no steps", tt.name)
-	}
 
 	tt.assert(t, result)
+}
+
+func runAcceptanceTask(r *runner, name string) (taskReport, error) {
+	results, err := r.runSelected(context.Background(), name)
+	if err != nil {
+		return taskReport{
+			Name:         name,
+			Provider:     resolvedProvider(r.provider),
+			Success:      false,
+			ErrorMessage: err.Error(),
+		}, fmt.Errorf("run selected %s: %w", name, err)
+	}
+	if len(results) != 1 {
+		return taskReport{
+			Name:         name,
+			Provider:     resolvedProvider(r.provider),
+			Success:      false,
+			ErrorMessage: fmt.Sprintf("expected 1 task result, got %d", len(results)),
+		}, fmt.Errorf("expected 1 task result, got %d", len(results))
+	}
+
+	result := results[0]
+	if len(result.Steps) == 0 {
+		result.Success = false
+		if result.ErrorMessage == "" {
+			result.ErrorMessage = "task returned no steps"
+		}
+		return result, fmt.Errorf("task %s returned no steps", name)
+	}
+	return result, nil
 }
 
 func resolveAcceptancePlannerConfig(t *testing.T) llm.Config {
@@ -293,6 +344,26 @@ func findStepWithExitCode(steps []stepReport, exitCode int) *stepReport {
 		}
 	}
 	return nil
+}
+
+func writeAcceptanceArtifact(t *testing.T, result report) {
+	t.Helper()
+
+	dir := strings.TrimSpace(os.Getenv("AIR_AGENT_ACCEPTANCE_ARTIFACT_DIR"))
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir acceptance artifact dir: %v", err)
+	}
+
+	body, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal acceptance result: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "result.json"), body, 0o644); err != nil {
+		t.Fatalf("write acceptance result: %v", err)
+	}
 }
 
 func getenvDefault(key, fallback string) string {

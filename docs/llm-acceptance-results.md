@@ -56,6 +56,8 @@ scripts/run-agent-acceptance.sh \
 
 - `.github/workflows/llm-acceptance.yml`
   - 既支持手动触发，也支持被其他 workflow 复用
+  - 成功执行时会上传标准 artifact 目录
+  - 当前至少包含 `llm-acceptance.log` 和 `result.json`
 - `.github/workflows/ci.yml`
   - 常规 `go test ./...`
   - 如果仓库配置了 `DEEPSEEK_API_KEY` secret，会自动串上 `llm-acceptance`
