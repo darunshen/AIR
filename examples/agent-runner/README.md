@@ -24,6 +24,14 @@
 go test ./examples/agent-runner -run TestScriptedAgentWorkflowAcceptance
 ```
 
+以及一个可重复执行的验收脚本：
+
+```bash
+scripts/run-agent-acceptance.sh --planner scripted --task all
+```
+
+真实模型结果记录见 `docs/llm-acceptance-results.md`。
+
 ## 运行方式
 
 默认使用 OpenAI planner 和 `local` provider：
