@@ -18,6 +18,7 @@ type deepSeekPlanner struct {
 	model   string
 	timeout time.Duration
 	client  *http.Client
+	logger  func(format string, args ...any)
 }
 
 type deepSeekChatCompletionRequest struct {
@@ -72,6 +73,7 @@ func NewDeepSeekPlanner(cfg Config) (Planner, error) {
 		model:   cfg.Model,
 		timeout: cfg.Timeout,
 		client:  &http.Client{Timeout: cfg.Timeout},
+		logger:  cfg.Logger,
 	}, nil
 }
 
@@ -84,6 +86,10 @@ func (p *deepSeekPlanner) NextAction(ctx context.Context, req PlanRequest) (*Pla
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
+	}
+	if p.logger != nil {
+		p.logger("[llm/deepseek] request model=%s task=%s step=%d max_steps=%d", p.model, req.TaskName, req.Step, req.MaxSteps)
+		p.logger("[llm/deepseek] request body=%s", previewText(string(body), 1200))
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(body))
@@ -102,6 +108,9 @@ func (p *deepSeekPlanner) NextAction(ctx context.Context, req PlanRequest) (*Pla
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if p.logger != nil {
+		p.logger("[llm/deepseek] response status=%d body=%s", resp.StatusCode, previewText(string(respBody), 1200))
 	}
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("deepseek chat completions api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))

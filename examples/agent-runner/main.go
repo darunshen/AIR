@@ -63,6 +63,7 @@ type runner struct {
 	escalationModel string
 	plannerRetries  int
 	commandTimeout  time.Duration
+	traceEnabled    bool
 }
 
 func main() {
@@ -104,13 +105,15 @@ func main() {
 		manager:         manager,
 		provider:        *provider,
 		plannerName:     resolvedPlanner,
-		plannerConfig:   cfg,
 		plannerFactory:  newRunnerPlanner,
 		model:           cfg.Model,
 		escalationModel: strings.TrimSpace(*escalationModel),
 		plannerRetries:  resolvePlannerRetries(*plannerRetries),
 		commandTimeout:  10 * time.Second,
+		traceEnabled:    envBool("AIR_AGENT_TRACE"),
 	}
+	cfg.Logger = r.tracef
+	r.plannerConfig = cfg
 
 	ctx := context.Background()
 	result := report{
@@ -189,4 +192,31 @@ func exitJSONError(err error) {
 		"error_message": err.Error(),
 	})
 	os.Exit(1)
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *runner) tracef(format string, args ...any) {
+	if !r.traceEnabled {
+		return
+	}
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+func previewText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...(truncated)"
 }

@@ -133,6 +133,7 @@
   - `release` 现已在打包前串上常规测试与可选 LLM 验收
   - `llm-acceptance` 现会上传标准 artifact，包含日志与 `result.json`
   - `llm-acceptance` 在 `firecracker` 模式下已增加 KVM 预检与 demo 资产自动准备
+  - `llm-acceptance` 已默认开启 agent trace，CI log 可直接看到 planner / exec / session 过程
 
 - 发布与安装包基线已接入
   - 已支持 `air version`

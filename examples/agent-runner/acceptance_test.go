@@ -111,17 +111,20 @@ func newAcceptanceRunner(t *testing.T, cfg llm.Config, provider string) *runner 
 	}
 
 	plannerRetries := resolvePlannerRetries(-1)
-	return &runner{
+	r := &runner{
 		manager:         manager,
 		provider:        provider,
 		plannerName:     resolvedPlanner,
-		plannerConfig:   cfg,
 		plannerFactory:  newRunnerPlanner,
 		model:           cfg.Model,
 		escalationModel: strings.TrimSpace(os.Getenv("AIR_AGENT_ESCALATION_MODEL")),
 		plannerRetries:  plannerRetries,
 		commandTimeout:  5 * time.Second,
+		traceEnabled:    envBool("AIR_AGENT_TRACE"),
 	}
+	cfg.Logger = r.tracef
+	r.plannerConfig = cfg
+	return r
 }
 
 func acceptanceCases() []acceptanceCase {

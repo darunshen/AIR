@@ -208,6 +208,7 @@ jobs:
           AIR_AGENT_ACCEPTANCE_TASKS: ${{ inputs.tasks }}
           AIR_AGENT_RUNTIME_PROVIDER: ${{ inputs.runtime_provider }}
           AIR_AGENT_ACCEPTANCE_ARTIFACT_DIR: artifacts/github-actions/llm-acceptance
+          AIR_AGENT_TRACE: "1"
           AIR_FIRECRACKER_BIN: ${{ steps.firecracker-host.outputs.assets_dir }}/firecracker
           AIR_FIRECRACKER_KERNEL: ${{ steps.firecracker-host.outputs.assets_dir }}/hello-vmlinux.bin
           AIR_FIRECRACKER_ROOTFS: ${{ steps.firecracker-host.outputs.assets_dir }}/hello-rootfs-air.ext4

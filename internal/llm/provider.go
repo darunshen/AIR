@@ -54,6 +54,7 @@ type Config struct {
 	APIKey    string
 	BaseURL   string
 	Timeout   time.Duration
+	Logger    func(format string, args ...any)
 }
 
 func ResolveConfigFromEnv() Config {
@@ -120,4 +121,22 @@ func getenvDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func tracef(cfg Config, format string, args ...any) {
+	if cfg.Logger == nil {
+		return
+	}
+	cfg.Logger(format, args...)
+}
+
+func previewText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...(truncated)"
 }

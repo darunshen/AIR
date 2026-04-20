@@ -58,6 +58,7 @@ scripts/run-agent-acceptance.sh \
   - 既支持手动触发，也支持被其他 workflow 复用
   - 成功执行时会上传标准 artifact 目录
   - 当前至少包含 `llm-acceptance.log` 和 `result.json`
+  - workflow 默认开启 `AIR_AGENT_TRACE=1`，GitHub Actions log 会实时输出 planner / exec / session 关键步骤
   - 若选择 `runtime_provider=firecracker`，workflow 会先预检 `/dev/kvm`
   - `firecracker` 模式当前要求 self-hosted Linux runner；GitHub-hosted runner 通常不提供 KVM
 - `.github/workflows/ci.yml`

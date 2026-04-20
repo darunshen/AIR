@@ -19,6 +19,7 @@ type openAIPlanner struct {
 	timeout time.Duration
 	client  *http.Client
 	effort  string
+	logger  func(format string, args ...any)
 }
 
 type openAIResponsesRequest struct {
@@ -99,6 +100,7 @@ func NewOpenAIPlanner(cfg Config) (Planner, error) {
 		timeout: cfg.Timeout,
 		client:  &http.Client{Timeout: cfg.Timeout},
 		effort:  cfg.Reasoning,
+		logger:  cfg.Logger,
 	}, nil
 }
 
@@ -111,6 +113,10 @@ func (p *openAIPlanner) NextAction(ctx context.Context, req PlanRequest) (*PlanA
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
+	}
+	if p.logger != nil {
+		p.logger("[llm/openai] request model=%s task=%s step=%d max_steps=%d", p.model, req.TaskName, req.Step, req.MaxSteps)
+		p.logger("[llm/openai] request body=%s", previewText(string(body), 1200))
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/responses", bytes.NewReader(body))
@@ -129,6 +135,9 @@ func (p *openAIPlanner) NextAction(ctx context.Context, req PlanRequest) (*PlanA
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if p.logger != nil {
+		p.logger("[llm/openai] response status=%d body=%s", resp.StatusCode, previewText(string(respBody), 1200))
 	}
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("openai responses api returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
