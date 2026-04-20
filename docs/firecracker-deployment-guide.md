@@ -24,6 +24,13 @@
 - macOS 或 Windows 直接运行 Firecracker
 - 生产环境多租户隔离基线
 - 已经要求 `jailer`、只读镜像、overlay、snapshot 的场景
+- GitHub-hosted Actions runner 上直接跑 Firecracker
+
+对于 GitHub Actions：
+
+- `local` provider 可直接跑在 GitHub-hosted runner
+- `firecracker` provider 需要 self-hosted Linux runner
+- 该 runner 需要启用 KVM，并暴露可读写 `/dev/kvm`
 
 ## 2. 宿主机前提
 

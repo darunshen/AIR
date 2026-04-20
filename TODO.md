@@ -132,6 +132,7 @@
   - 若配置 `DEEPSEEK_API_KEY` secret，会自动复用 `llm-acceptance`
   - `release` 现已在打包前串上常规测试与可选 LLM 验收
   - `llm-acceptance` 现会上传标准 artifact，包含日志与 `result.json`
+  - `llm-acceptance` 在 `firecracker` 模式下已增加 KVM 预检与 demo 资产自动准备
 
 - 发布与安装包基线已接入
   - 已支持 `air version`

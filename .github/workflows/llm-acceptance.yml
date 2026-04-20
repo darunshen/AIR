@@ -31,6 +31,11 @@ on:
         required: false
         type: string
         default: "local"
+      firecracker_assets_dir:
+        description: "Firecracker asset directory for workflow runs"
+        required: false
+        type: string
+        default: "artifacts/firecracker"
       upload_artifact:
         description: "Whether to upload go test output"
         required: false
@@ -85,6 +90,11 @@ on:
         options:
           - local
           - firecracker
+      firecracker_assets_dir:
+        description: "Firecracker asset directory for workflow runs"
+        required: true
+        default: "artifacts/firecracker"
+        type: string
       upload_artifact:
         description: "Upload go test output artifact"
         required: true
@@ -110,6 +120,12 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Install Firecracker prep tools
+        if: ${{ inputs.runtime_provider == 'firecracker' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y e2fsprogs
 
       - name: Validate planner secret
         id: planner-secret
@@ -148,6 +164,39 @@ jobs:
           echo "missing planner secret for ${PLANNER}" >&2
           exit 1
 
+      - name: Validate Firecracker host prerequisites
+        id: firecracker-host
+        if: ${{ inputs.runtime_provider == 'firecracker' && steps.planner-secret.outputs.available == 'true' }}
+        env:
+          FIRECRACKER_ASSETS_DIR: ${{ inputs.firecracker_assets_dir }}
+        run: |
+          set -euo pipefail
+          if [[ "$(uname -s)" != "Linux" ]]; then
+            echo "firecracker provider requires a Linux runner" >&2
+            exit 1
+          fi
+          if [[ ! -e /dev/kvm ]]; then
+            echo "firecracker provider requires /dev/kvm; GitHub-hosted runners usually do not expose KVM. Use a self-hosted Linux runner with KVM enabled." >&2
+            exit 1
+          fi
+          if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+            echo "firecracker provider requires read/write access to /dev/kvm" >&2
+            exit 1
+          fi
+          mkdir -p "${FIRECRACKER_ASSETS_DIR}"
+          echo "assets_dir=${FIRECRACKER_ASSETS_DIR}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare Firecracker assets
+        if: ${{ inputs.runtime_provider == 'firecracker' && steps.planner-secret.outputs.available == 'true' }}
+        env:
+          FIRECRACKER_ASSETS_DIR: ${{ steps.firecracker-host.outputs.assets_dir }}
+        run: |
+          set -euo pipefail
+          ./scripts/fetch-firecracker-demo-assets.sh "${FIRECRACKER_ASSETS_DIR}"
+          ./scripts/prepare-firecracker-rootfs.sh \
+            "${FIRECRACKER_ASSETS_DIR}/hello-rootfs.ext4" \
+            "${FIRECRACKER_ASSETS_DIR}/hello-rootfs-air.ext4"
+
       - name: Run real LLM acceptance test
         if: ${{ steps.planner-secret.outputs.available == 'true' }}
         env:
@@ -159,6 +208,10 @@ jobs:
           AIR_AGENT_ACCEPTANCE_TASKS: ${{ inputs.tasks }}
           AIR_AGENT_RUNTIME_PROVIDER: ${{ inputs.runtime_provider }}
           AIR_AGENT_ACCEPTANCE_ARTIFACT_DIR: artifacts/github-actions/llm-acceptance
+          AIR_FIRECRACKER_BIN: ${{ steps.firecracker-host.outputs.assets_dir }}/firecracker
+          AIR_FIRECRACKER_KERNEL: ${{ steps.firecracker-host.outputs.assets_dir }}/hello-vmlinux.bin
+          AIR_FIRECRACKER_ROOTFS: ${{ steps.firecracker-host.outputs.assets_dir }}/hello-rootfs-air.ext4
+          AIR_KVM_DEVICE: /dev/kvm
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
