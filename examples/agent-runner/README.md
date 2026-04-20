@@ -18,6 +18,12 @@
 - stdout / stderr / exit code / request_id / timeout 是否足够做下一步决策
 - planner 失败时的重试和模型升级策略是否足够稳定
 
+仓库内还提供 scripted planner 的验收测试：
+
+```bash
+go test ./examples/agent-runner -run TestScriptedAgentWorkflowAcceptance
+```
+
 ## 运行方式
 
 默认使用 OpenAI planner 和 `local` provider：
