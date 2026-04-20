@@ -114,6 +114,12 @@
   - DeepSeek planner 已验证通过
   - finish 后会做一次额外测试校验
 
+- LLM 验收复跑入口已补齐
+  - 已新增 `scripts/run-agent-acceptance.sh`
+  - 已支持通过环境变量或 key 文件运行 OpenAI / DeepSeek / scripted 验收
+  - 每次执行会落盘 `command.txt`、`metadata.txt`、`result.json`
+  - 已新增 `docs/llm-acceptance-results.md` 记录真实验收快照
+
 - 发布与安装包基线已接入
   - 已支持 `air version`
   - 已支持 `air-agent --version`

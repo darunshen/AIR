@@ -123,6 +123,16 @@ go run ./examples/agent-runner --planner deepseek --model deepseek-chat --task a
 go run ./examples/agent-runner --planner scripted --task all
 ```
 
+### 4.5 使用统一验收脚本
+
+```bash
+scripts/run-agent-acceptance.sh --planner scripted --task all
+```
+
+如果要跑真实模型，优先用这个脚本，而不是手工拼长命令。它支持从 `OPENAI_API_KEY_FILE` / `DEEPSEEK_API_KEY_FILE` 读取 key，并把结果落到 `artifacts/agent-acceptance/`。
+
+真实模型验收快照见 `docs/llm-acceptance-results.md`。
+
 ## 5. 当前内置任务
 
 ### 5.1 `run-smoke`
