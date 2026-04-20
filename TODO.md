@@ -126,6 +126,12 @@
   - 已支持通过 `AIR_LLM_ACCEPTANCE=1` 和相关环境变量显式启用
   - 已新增手动触发的 GitHub Actions workflow：`llm-acceptance`
 
+- GitHub Actions 已串联常规测试 / LLM 验收 / release
+  - 已新增 `.github/workflows/ci.yml`
+  - `ci` 会先跑 `go test ./...`
+  - 若配置 `DEEPSEEK_API_KEY` secret，会自动复用 `llm-acceptance`
+  - `release` 现已在打包前串上常规测试与可选 LLM 验收
+
 - 发布与安装包基线已接入
   - 已支持 `air version`
   - 已支持 `air-agent --version`

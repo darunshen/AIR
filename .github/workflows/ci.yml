@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit and integration-lite tests
+        run: |
+          go test ./...
+
+  llm-acceptance:
+    needs: test
+    uses: ./.github/workflows/llm-acceptance.yml
+    with:
+      planner: deepseek
+      model: deepseek-chat
+      escalation_model: deepseek-reasoner
+      planner_retries: "1"
+      tasks: run-smoke,session-workflow,test-and-fix
+      runtime_provider: local
+      upload_artifact: true
+      allow_missing_secret: true
+    secrets:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

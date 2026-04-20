@@ -11,7 +11,46 @@ on:
         required: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: |
+          go test ./...
+
+  llm-acceptance:
+    needs: test
+    uses: ./.github/workflows/llm-acceptance.yml
+    with:
+      planner: deepseek
+      model: deepseek-chat
+      escalation_model: deepseek-reasoner
+      planner_retries: "1"
+      tasks: run-smoke,session-workflow,test-and-fix
+      runtime_provider: local
+      upload_artifact: true
+      allow_missing_secret: true
+    secrets:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
   build-release:
+    needs:
+      - test
+      - llm-acceptance
+    if: ${{ always() && needs.test.result == 'success' && needs.llm-acceptance.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

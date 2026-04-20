@@ -1,6 +1,52 @@
 name: llm-acceptance
 
 on:
+  workflow_call:
+    inputs:
+      planner:
+        description: "Planner provider"
+        required: true
+        type: string
+      model:
+        description: "Planner model"
+        required: true
+        type: string
+      escalation_model:
+        description: "Planner escalation model"
+        required: false
+        type: string
+        default: ""
+      planner_retries:
+        description: "Planner retries before escalation"
+        required: false
+        type: string
+        default: "1"
+      tasks:
+        description: "Comma-separated task list"
+        required: false
+        type: string
+        default: "run-smoke,session-workflow,test-and-fix"
+      runtime_provider:
+        description: "AIR runtime provider"
+        required: false
+        type: string
+        default: "local"
+      upload_artifact:
+        description: "Whether to upload go test output"
+        required: false
+        type: boolean
+        default: true
+      allow_missing_secret:
+        description: "Skip acceptance instead of failing when planner secret is missing"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      OPENAI_API_KEY:
+        required: false
+      DEEPSEEK_API_KEY:
+        required: false
+
   workflow_dispatch:
     inputs:
       planner:
@@ -15,18 +61,22 @@ on:
         description: "Planner model"
         required: true
         default: "deepseek-chat"
+        type: string
       escalation_model:
         description: "Planner escalation model"
         required: false
         default: "deepseek-reasoner"
+        type: string
       planner_retries:
         description: "Planner retries before escalation"
         required: true
         default: "1"
+        type: string
       tasks:
         description: "Comma-separated task list"
         required: true
         default: "run-smoke,session-workflow,test-and-fix"
+        type: string
       runtime_provider:
         description: "AIR runtime provider"
         required: true
@@ -35,6 +85,16 @@ on:
         options:
           - local
           - firecracker
+      upload_artifact:
+        description: "Upload go test output artifact"
+        required: true
+        default: true
+        type: boolean
+      allow_missing_secret:
+        description: "Skip acceptance instead of failing when planner secret is missing"
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   acceptance:
@@ -52,18 +112,21 @@ jobs:
           go-version-file: go.mod
 
       - name: Validate planner secret
+        id: planner-secret
         env:
           PLANNER: ${{ inputs.planner }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ALLOW_MISSING_SECRET: ${{ inputs.allow_missing_secret }}
         run: |
           set -euo pipefail
+          has_secret=""
           case "${PLANNER}" in
             openai)
-              test -n "${OPENAI_API_KEY}" || { echo "missing OPENAI_API_KEY secret" >&2; exit 1; }
+              has_secret="${OPENAI_API_KEY}"
               ;;
             deepseek)
-              test -n "${DEEPSEEK_API_KEY}" || { echo "missing DEEPSEEK_API_KEY secret" >&2; exit 1; }
+              has_secret="${DEEPSEEK_API_KEY}"
               ;;
             *)
               echo "unsupported planner: ${PLANNER}" >&2
@@ -71,7 +134,22 @@ jobs:
               ;;
           esac
 
+          if [[ -n "${has_secret}" ]]; then
+            echo "available=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          if [[ "${ALLOW_MISSING_SECRET}" == "true" ]]; then
+            echo "available=false" >> "${GITHUB_OUTPUT}"
+            echo "planner secret is missing; skipping LLM acceptance"
+            exit 0
+          fi
+
+          echo "missing planner secret for ${PLANNER}" >&2
+          exit 1
+
       - name: Run real LLM acceptance test
+        if: ${{ steps.planner-secret.outputs.available == 'true' }}
         env:
           AIR_LLM_ACCEPTANCE: "1"
           AIR_AGENT_PROVIDER: ${{ inputs.planner }}
@@ -83,4 +161,12 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
-          go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
+          mkdir -p artifacts/github-actions
+          go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v | tee artifacts/github-actions/llm-acceptance.log
+
+      - name: Upload acceptance log
+        if: ${{ inputs.upload_artifact && steps.planner-secret.outputs.available == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-acceptance-${{ inputs.planner }}-${{ inputs.runtime_provider }}
+          path: artifacts/github-actions/llm-acceptance.log

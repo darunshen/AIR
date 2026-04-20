@@ -52,7 +52,17 @@ scripts/run-agent-acceptance.sh \
 - `metadata.txt`
 - `result.json`
 
-仓库还提供了一个手动触发的 GitHub Actions workflow：`.github/workflows/llm-acceptance.yml`。
+仓库还提供了一套复用式 GitHub Actions：
+
+- `.github/workflows/llm-acceptance.yml`
+  - 既支持手动触发，也支持被其他 workflow 复用
+- `.github/workflows/ci.yml`
+  - 常规 `go test ./...`
+  - 如果仓库配置了 `DEEPSEEK_API_KEY` secret，会自动串上 `llm-acceptance`
+- `.github/workflows/release.yml`
+  - 先跑常规测试
+  - 如果仓库配置了 `DEEPSEEK_API_KEY` secret，会复用同一份 `llm-acceptance`
+  - 通过后才构建并上传 release 产物
 
 ## 2. 2026-04-20 验收快照
 

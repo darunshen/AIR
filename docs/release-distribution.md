@@ -75,6 +75,8 @@ BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 仓库已提供发布工作流：
 
 - [.github/workflows/release.yml](../.github/workflows/release.yml)
+- [.github/workflows/ci.yml](../.github/workflows/ci.yml)
+- [.github/workflows/llm-acceptance.yml](../.github/workflows/llm-acceptance.yml)
 
 触发方式：
 
@@ -83,10 +85,12 @@ BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 
 工作流会：
 
-1. 构建跨平台归档
-2. 构建 Linux `.deb`
-3. 生成 apt 仓库目录压缩包
-4. 上传到 GitHub Release
+1. 跑 `go test ./...`
+2. 如果仓库配置了 `DEEPSEEK_API_KEY` secret，复用 `llm-acceptance` workflow 跑真实 LLM 验收
+3. 构建跨平台归档
+4. 构建 Linux `.deb`
+5. 生成 apt 仓库目录压缩包
+6. 上传到 GitHub Release
 
 ## 5. `.deb` 安装
 
