@@ -32,6 +32,7 @@ type taskReport struct {
 	SessionID    string       `json:"session_id,omitempty"`
 	Success      bool         `json:"success"`
 	ErrorMessage string       `json:"error_message,omitempty"`
+	FinalSummary string       `json:"final_summary,omitempty"`
 	Steps        []stepReport `json:"steps"`
 }
 

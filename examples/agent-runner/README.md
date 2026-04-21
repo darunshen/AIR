@@ -162,3 +162,6 @@ export AIR_AGENT_REASONING=medium
 - 每一步的命令
 - stdout / stderr / exit_code / request_id / timeout
 - planner 最终的 `finish` 判定
+- 任务级 `final_summary`
+
+对于 `test-and-fix` 和 `repo-bugfix` 这类 coding 任务，`final_summary` 会额外给出更像交付结果的摘要，例如修改了哪个文件、当前关键文件内容，以及预期的验证命令结果。

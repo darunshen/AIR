@@ -19,6 +19,7 @@ type taskSpec struct {
 	RunTimeout         time.Duration
 	SetupFn            func(*runner, string) ([]stepReport, []llm.StepObservation, error)
 	FinishCheckCommand string
+	SummaryCommand     string
 }
 
 func repoBugfixTaskSpec() taskSpec {
@@ -30,6 +31,7 @@ func repoBugfixTaskSpec() taskSpec {
 		MaxSteps:           10,
 		SetupFn:            setupRepoBugfixFixture,
 		FinishCheckCommand: "cd demo-repo && sh tests/test.sh",
+		SummaryCommand:     `cd demo-repo && printf 'Updated file:\n- src/lib.sh\n\nCurrent src/lib.sh:\n' && sed -n '1,120p' src/lib.sh && printf '\nCurrent demo output:\n' && sh src/message.sh && printf '\nExpected verification:\n- sh tests/test.sh -> TEST PASSED\n'`,
 	}
 }
 
@@ -67,6 +69,7 @@ func (r *runner) runSelected(ctx context.Context, name string) ([]taskReport, er
 				MaxSteps:           8,
 				SetupFn:            setupTestAndFixFixture,
 				FinishCheckCommand: "sh test.sh",
+				SummaryCommand:     `printf 'Updated file:\n- app.sh\n\nCurrent app.sh:\n' && sed -n '1,120p' app.sh && printf '\nExpected verification:\n- sh test.sh -> TEST PASSED\n'`,
 			}),
 			r.runTask(ctx, repoBugfixTaskSpec()),
 		}, nil
@@ -104,6 +107,7 @@ func (r *runner) runSelected(ctx context.Context, name string) ([]taskReport, er
 			MaxSteps:           8,
 			SetupFn:            setupTestAndFixFixture,
 			FinishCheckCommand: "sh test.sh",
+			SummaryCommand:     `printf 'Updated file:\n- app.sh\n\nCurrent app.sh:\n' && sed -n '1,120p' app.sh && printf '\nExpected verification:\n- sh test.sh -> TEST PASSED\n'`,
 		})}, nil
 	case "repo-bugfix":
 		return []taskReport{r.runTask(ctx, repoBugfixTaskSpec())}, nil
@@ -223,6 +227,19 @@ func (r *runner) runTask(ctx context.Context, spec taskSpec) (result taskReport)
 				if !verifyStep.Success || verifyStep.ExitCode != 0 {
 					result.Success = false
 					result.ErrorMessage = firstError(result.ErrorMessage, "finish verification failed")
+				}
+			}
+			if spec.SummaryCommand != "" && spec.Mode == "session" {
+				summaryStep := r.runSessionExec(sessionID, &llm.PlanAction{
+					Type:    "session_exec",
+					Command: spec.SummaryCommand,
+					Reason:  "capture a delivery-style final summary for the completed task",
+				})
+				summaryStep.Name = "final_summary"
+				summaryStep.Kind = "final_summary"
+				result.Steps = append(result.Steps, summaryStep)
+				if text := summaryText(summaryStep); text != "" {
+					result.FinalSummary = text
 				}
 			}
 			r.tracef("[agent/task] done name=%s success=%t session_id=%s", spec.Name, result.Success, sessionID)
@@ -433,6 +450,13 @@ func observationFromStep(step stepReport) llm.StepObservation {
 		ErrorMessage: step.ErrorMessage,
 		Note:         step.Note,
 	}
+}
+
+func summaryText(step stepReport) string {
+	if text := strings.TrimSpace(step.Stdout); text != "" {
+		return text
+	}
+	return strings.TrimSpace(step.Stderr)
 }
 
 func (r *runner) appendDeleteStep(result *taskReport, sessionID string) {

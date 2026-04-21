@@ -202,6 +202,12 @@ func acceptanceCases() []acceptanceCase {
 				if !strings.Contains(verifyStep.Stdout, "TEST PASSED") {
 					t.Fatalf("unexpected finish verification stdout: %q", verifyStep.Stdout)
 				}
+				if !strings.Contains(result.FinalSummary, "app.sh") {
+					t.Fatalf("expected final summary to mention app.sh, got: %q", result.FinalSummary)
+				}
+				if !strings.Contains(result.FinalSummary, "hello") {
+					t.Fatalf("expected final summary to mention fixed hello output, got: %q", result.FinalSummary)
+				}
 			},
 		},
 		{
@@ -224,6 +230,12 @@ func acceptanceCases() []acceptanceCase {
 				}
 				if verifyStep.ExitCode != 0 {
 					t.Fatalf("unexpected repo finish verification exit code: %d", verifyStep.ExitCode)
+				}
+				if !strings.Contains(result.FinalSummary, "src/lib.sh") {
+					t.Fatalf("expected final summary to mention src/lib.sh, got: %q", result.FinalSummary)
+				}
+				if !strings.Contains(result.FinalSummary, "hello air") {
+					t.Fatalf("expected final summary to mention hello air, got: %q", result.FinalSummary)
 				}
 			},
 		},

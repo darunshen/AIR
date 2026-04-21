@@ -199,6 +199,7 @@ go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
 - 运行 repo 级测试
 - 修改实现并再次执行 `cd demo-repo && sh tests/test.sh`
 - runner 在 planner `finish` 之后再做一次 repo 级最终校验
+- 成功时会输出一个 delivery-style `final_summary`，概括修改文件和最终状态
 
 ## 6. 输出结构
 
@@ -208,6 +209,7 @@ go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
 - `model`
 - `task`
 - `success`
+- `tasks[].final_summary`
 - `tasks[].steps[]`
 
 每一步会包含：
@@ -221,6 +223,8 @@ go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
 - `timeout`
 - `success`
 - `note`
+
+其中 `tasks[].final_summary` 适合直接展示给人看，尤其是 repo 修复类任务；`tasks[].steps[]` 则保留完整的 agent 执行证据链。
 
 这意味着你可以把 `examples/agent-runner` 当成：
 
