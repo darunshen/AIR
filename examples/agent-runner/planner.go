@@ -119,6 +119,37 @@ func (scriptedPlanner) NextAction(_ context.Context, req llm.PlanRequest) (*llm.
 			}
 			return &llm.PlanAction{Type: "finish", Reason: "the test still fails after the attempted fix", FinishSuccess: false, FinishSummary: "test-and-fix task did not converge"}, nil
 		}
+	case "repo-bugfix":
+		switch len(req.History) {
+		case 1:
+			return &llm.PlanAction{Type: "session_exec", Command: "cd demo-repo && cat README.md", Reason: "inspect the repo readme to understand the expected behavior"}, nil
+		case 2:
+			return &llm.PlanAction{Type: "session_exec", Command: "cd demo-repo && cat src/lib.sh", Reason: "inspect the shared helper that likely builds the greeting"}, nil
+		case 3:
+			return &llm.PlanAction{Type: "session_exec", Command: "cd demo-repo && cat src/message.sh", Reason: "inspect the repo entrypoint that uses the helper"}, nil
+		case 4:
+			return &llm.PlanAction{Type: "session_exec", Command: "cd demo-repo && cat tests/test.sh", Reason: "inspect the repo test suite to confirm the expected output"}, nil
+		case 5:
+			return &llm.PlanAction{Type: "session_exec", Command: "cd demo-repo && sh tests/test.sh", Reason: "run the repo test suite to observe the current failure"}, nil
+		case 6:
+			return &llm.PlanAction{Type: "session_exec", Command: `cd demo-repo && cat > src/lib.sh <<'EOF'
+#!/bin/sh
+
+build_greeting() {
+  name="$1"
+  printf 'hello %s\n' "$name"
+}
+EOF
+chmod +x src/lib.sh`, Reason: "rewrite the helper so both the library and entrypoint produce hello air"}, nil
+		case 7:
+			return &llm.PlanAction{Type: "session_exec", Command: "cd demo-repo && sh tests/test.sh", Reason: "rerun the repo test suite after fixing the helper"}, nil
+		default:
+			last := req.History[len(req.History)-1]
+			if last.ExitCode == 0 {
+				return &llm.PlanAction{Type: "finish", Reason: "the repo test suite now passes", FinishSuccess: true, FinishSummary: "repo-bugfix task completed successfully"}, nil
+			}
+			return &llm.PlanAction{Type: "finish", Reason: "the repo test suite still fails after the attempted fix", FinishSuccess: false, FinishSummary: "repo-bugfix task did not converge"}, nil
+		}
 	default:
 		return nil, fmt.Errorf("unsupported task %q", req.TaskName)
 	}

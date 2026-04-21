@@ -82,6 +82,12 @@ go run ./examples/agent-runner --task session-workflow
 go run ./examples/agent-runner --task test-and-fix
 ```
 
+只跑 repo 修复任务：
+
+```bash
+go run ./examples/agent-runner --task repo-bugfix
+```
+
 切到 Firecracker：
 
 ```bash
@@ -134,6 +140,13 @@ export AIR_AGENT_REASONING=medium
   - 预置一个带 bug 的 `app.sh` 和会失败的 `test.sh`
   - planner 自己检查文件、跑测试、修复、复测
   - finish 后 runner 再做一次最终校验
+
+- `repo-bugfix`
+  - 创建 session
+  - 预置一个多文件 demo repo：`README.md`、`src/lib.sh`、`src/message.sh`、`tests/test.sh`
+  - planner 自己阅读 repo 文件、运行 repo 级测试、修复实现、再次跑测试
+  - finish 后 runner 再做一次 repo 级最终校验
+  - 这个任务比单文件 `test-and-fix` 更接近真实 coding agent 的 repo 修复闭环
   - 删除 session
 
 ## 输出

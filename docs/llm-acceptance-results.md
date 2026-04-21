@@ -19,7 +19,7 @@ AIR_LLM_ACCEPTANCE=1 \
 AIR_AGENT_PROVIDER=deepseek \
 AIR_AGENT_MODEL=deepseek-chat \
 AIR_AGENT_ESCALATION_MODEL=deepseek-reasoner \
-AIR_AGENT_ACCEPTANCE_TASKS=run-smoke,session-workflow,test-and-fix \
+AIR_AGENT_ACCEPTANCE_TASKS=run-smoke,session-workflow,test-and-fix,repo-bugfix \
 DEEPSEEK_API_KEY_FILE=~/tmp/deepseek.api \
 go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
 ```
@@ -97,11 +97,12 @@ scripts/run-agent-acceptance.sh \
 - `run-smoke`：通过
 - `session-workflow`：通过
 - `test-and-fix`：通过
+- `repo-bugfix`：通过
 
 备注：
 
 - 这次通过没有明显触发升级模型
-- 说明当前 DeepSeek 接入已足够覆盖 one-shot、多步 session、test-and-fix 三类主流程
+- 说明当前 DeepSeek 接入已足够覆盖 one-shot、多步 session、test-and-fix、repo-bugfix 四类主流程
 
 ### 2.2 OpenAI
 

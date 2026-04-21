@@ -34,8 +34,8 @@ func TestRunnerTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run selected: %v", err)
 	}
-	if len(results) != 4 {
-		t.Fatalf("expected 4 task results, got %d", len(results))
+	if len(results) != 5 {
+		t.Fatalf("expected 5 task results, got %d", len(results))
 	}
 	for _, result := range results {
 		if !result.Success {

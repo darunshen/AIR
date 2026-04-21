@@ -114,6 +114,13 @@
   - DeepSeek planner 已验证通过
   - finish 后会做一次额外测试校验
 
+- `repo-bugfix` 工作流已接入
+  - reference agent 已支持多文件 repo 修复任务
+  - scripted planner 已纳入验收测试
+  - DeepSeek planner 已验证通过
+  - 任务会检查 repo 文件、跑 repo 级测试、修复实现、再次验证
+  - 该任务比单文件 `test-and-fix` 更接近真实 coding agent repo 修复闭环
+
 - LLM 验收复跑入口已补齐
   - 已新增 `scripts/run-agent-acceptance.sh`
   - 已支持通过环境变量或 key 文件运行 OpenAI / DeepSeek / scripted 验收

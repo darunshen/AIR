@@ -25,7 +25,7 @@ on:
         description: "Comma-separated task list"
         required: false
         type: string
-        default: "run-smoke,session-workflow,test-and-fix"
+        default: "run-smoke,session-workflow,test-and-fix,repo-bugfix"
       runtime_provider:
         description: "AIR runtime provider"
         required: false
@@ -80,7 +80,7 @@ on:
       tasks:
         description: "Comma-separated task list"
         required: true
-        default: "run-smoke,session-workflow,test-and-fix"
+        default: "run-smoke,session-workflow,test-and-fix,repo-bugfix"
         type: string
       runtime_provider:
         description: "AIR runtime provider"

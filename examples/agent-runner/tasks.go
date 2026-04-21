@@ -21,6 +21,18 @@ type taskSpec struct {
 	FinishCheckCommand string
 }
 
+func repoBugfixTaskSpec() taskSpec {
+	return taskSpec{
+		Name:               "repo-bugfix",
+		Mode:               "session",
+		Goal:               "In one persistent session, fix the demo repo under demo-repo so that `cd demo-repo && sh tests/test.sh` exits 0 and prints TEST PASSED. The repo already contains README.md, src/lib.sh, src/message.sh, and tests/test.sh. Inspect the repo, understand the failure, update the implementation, rerun the tests, and finish successfully only after the repo test passes.",
+		AllowedActionTypes: []string{"session_exec", "finish"},
+		MaxSteps:           10,
+		SetupFn:            setupRepoBugfixFixture,
+		FinishCheckCommand: "cd demo-repo && sh tests/test.sh",
+	}
+}
+
 func (r *runner) runSelected(ctx context.Context, name string) ([]taskReport, error) {
 	switch name {
 	case "all":
@@ -56,6 +68,7 @@ func (r *runner) runSelected(ctx context.Context, name string) ([]taskReport, er
 				SetupFn:            setupTestAndFixFixture,
 				FinishCheckCommand: "sh test.sh",
 			}),
+			r.runTask(ctx, repoBugfixTaskSpec()),
 		}, nil
 	case "run-smoke":
 		return []taskReport{r.runTask(ctx, taskSpec{
@@ -92,6 +105,8 @@ func (r *runner) runSelected(ctx context.Context, name string) ([]taskReport, er
 			SetupFn:            setupTestAndFixFixture,
 			FinishCheckCommand: "sh test.sh",
 		})}, nil
+	case "repo-bugfix":
+		return []taskReport{r.runTask(ctx, repoBugfixTaskSpec())}, nil
 	default:
 		return nil, fmt.Errorf("unsupported task %q", name)
 	}
@@ -491,6 +506,88 @@ chmod +x test.sh`
 		Kind:    step.Kind,
 		Success: true,
 		Note:    "Fixture ready: app.sh currently prints helo; test.sh passes only if app.sh prints hello exactly.",
+	}
+	return []stepReport{step}, []llm.StepObservation{observation}, nil
+}
+
+func setupRepoBugfixFixture(r *runner, sessionID string) ([]stepReport, []llm.StepObservation, error) {
+	setupCommand := `mkdir -p demo-repo/src demo-repo/tests
+cat > demo-repo/README.md <<'EOF'
+# Demo Repo
+
+src/message.sh should print exactly hello air.
+
+The implementation currently uses src/lib.sh and the repo test suite is:
+
+sh tests/test.sh
+EOF
+cat > demo-repo/src/lib.sh <<'EOF'
+#!/bin/sh
+
+build_greeting() {
+  name="$1"
+  printf 'helo %s\n' "$name"
+}
+EOF
+chmod +x demo-repo/src/lib.sh
+cat > demo-repo/src/message.sh <<'EOF'
+#!/bin/sh
+. "$(dirname "$0")/lib.sh"
+build_greeting air
+EOF
+chmod +x demo-repo/src/message.sh
+cat > demo-repo/tests/test.sh <<'EOF'
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+. ./src/lib.sh
+
+lib_output=$(build_greeting air)
+[ "$lib_output" = "hello air" ] || { echo "lib expected hello air, got: $lib_output" >&2; exit 1; }
+
+script_output=$(sh ./src/message.sh)
+[ "$script_output" = "hello air" ] || { echo "script expected hello air, got: $script_output" >&2; exit 1; }
+
+echo TEST PASSED
+EOF
+chmod +x demo-repo/tests/test.sh`
+
+	r.tracef("[agent/setup] repo fixture start session_id=%s", sessionID)
+	result, err := r.manager.Exec(sessionID, setupCommand)
+	step := stepReport{
+		Name:      "setup_repo_bugfix_fixture",
+		Kind:      "task_setup",
+		Command:   setupCommand,
+		SessionID: sessionID,
+		Note:      "fixture created: demo-repo has a broken greeting implementation and a repo-level test suite",
+		Success:   err == nil,
+	}
+	if result != nil {
+		step.RequestID = result.RequestID
+		step.Stdout = result.Stdout
+		step.Stderr = result.Stderr
+		step.ExitCode = result.ExitCode
+		step.DurationMS = result.Duration.Milliseconds()
+		step.Timeout = result.TimedOut
+	}
+	if err != nil {
+		step.ErrorMessage = err.Error()
+		r.tracef("[agent/setup] repo fixture error session_id=%s request_id=%s error=%s", sessionID, step.RequestID, err)
+		return []stepReport{step}, []llm.StepObservation{observationFromStep(step)}, err
+	}
+	if result != nil && result.ExitCode != 0 {
+		step.Success = false
+		step.ErrorMessage = fmt.Sprintf("repo fixture setup failed with exit code %d", result.ExitCode)
+		r.tracef("[agent/setup] repo fixture nonzero session_id=%s request_id=%s exit_code=%d", sessionID, step.RequestID, result.ExitCode)
+		return []stepReport{step}, []llm.StepObservation{observationFromStep(step)}, fmt.Errorf("repo fixture setup failed with exit code %d", result.ExitCode)
+	}
+	r.tracef("[agent/setup] repo fixture done session_id=%s request_id=%s", sessionID, step.RequestID)
+
+	observation := llm.StepObservation{
+		Name:    step.Name,
+		Kind:    step.Kind,
+		Success: true,
+		Note:    "Fixture ready: demo-repo is a small multi-file shell repo. src/lib.sh returns the wrong greeting, src/message.sh uses that helper, and tests/test.sh expects hello air from both paths.",
 	}
 	return []stepReport{step}, []llm.StepObservation{observation}, nil
 }

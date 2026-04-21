@@ -67,7 +67,7 @@ type runner struct {
 }
 
 func main() {
-	task := flag.String("task", "all", "task to run: all, run-smoke, session-workflow, session-recovery")
+	task := flag.String("task", "all", "task to run: all, run-smoke, session-workflow, session-recovery, test-and-fix, repo-bugfix")
 	provider := flag.String("provider", "", "runtime provider: local or firecracker")
 	plannerName := flag.String("planner", "", "planner backend: openai or scripted")
 	model := flag.String("model", "", "planner model override")

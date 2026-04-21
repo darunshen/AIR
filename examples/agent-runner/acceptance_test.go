@@ -204,6 +204,29 @@ func acceptanceCases() []acceptanceCase {
 				}
 			},
 		},
+		{
+			name: "repo-bugfix",
+			assert: func(t *testing.T, result taskReport) {
+				t.Helper()
+
+				setupStep := findStepByKind(result.Steps, "task_setup")
+				if setupStep == nil || !setupStep.Success {
+					t.Fatalf("expected successful repo setup step, got %+v", setupStep)
+				}
+
+				if !hasStepStdout(result.Steps, "TEST PASSED") {
+					t.Fatalf("expected repo test success stdout in steps: %+v", result.Steps)
+				}
+
+				verifyStep := findStepByKind(result.Steps, "finish_verification")
+				if verifyStep == nil {
+					t.Fatal("expected repo finish verification step")
+				}
+				if verifyStep.ExitCode != 0 {
+					t.Fatalf("unexpected repo finish verification exit code: %d", verifyStep.ExitCode)
+				}
+			},
+		},
 	}
 }
 
@@ -271,7 +294,7 @@ func resolveAcceptancePlannerConfig(t *testing.T) llm.Config {
 func resolveAcceptanceTasks(t *testing.T) []string {
 	t.Helper()
 
-	raw := getenvDefault("AIR_AGENT_ACCEPTANCE_TASKS", "run-smoke,session-workflow,test-and-fix")
+	raw := getenvDefault("AIR_AGENT_ACCEPTANCE_TASKS", "run-smoke,session-workflow,test-and-fix,repo-bugfix")
 	parts := strings.Split(raw, ",")
 	selected := make([]string, 0, len(parts))
 	for _, part := range parts {

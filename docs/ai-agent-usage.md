@@ -142,7 +142,7 @@ AIR_LLM_ACCEPTANCE=1 \
 AIR_AGENT_PROVIDER=deepseek \
 AIR_AGENT_MODEL=deepseek-chat \
 AIR_AGENT_ESCALATION_MODEL=deepseek-reasoner \
-AIR_AGENT_ACCEPTANCE_TASKS=run-smoke,session-workflow,test-and-fix \
+AIR_AGENT_ACCEPTANCE_TASKS=run-smoke,session-workflow,test-and-fix,repo-bugfix \
 DEEPSEEK_API_KEY_FILE=~/tmp/deepseek.api \
 go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
 ```
@@ -188,6 +188,17 @@ go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
 - 根据失败结果修复 `app.sh`
 - 再次执行 `sh test.sh`
 - runner 在 planner `finish` 之后再做一次最终校验
+
+### 5.5 `repo-bugfix`
+
+验证更贴近真实 repo 修复任务的闭环：
+
+- 预置一个多文件 demo repo
+- 包含 `README.md`、`src/lib.sh`、`src/message.sh`、`tests/test.sh`
+- planner 先检查 repo 文件和测试脚本
+- 运行 repo 级测试
+- 修改实现并再次执行 `cd demo-repo && sh tests/test.sh`
+- runner 在 planner `finish` 之后再做一次 repo 级最终校验
 
 ## 6. 输出结构
 
@@ -235,7 +246,7 @@ go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
 
 - 真正的 LLM planner
 - 真正的隔离执行
-- one-shot / session / recovery / test-and-fix
+- one-shot / session / recovery / test-and-fix / repo-bugfix
 - `air run` 已支持稳定 `error_type`
 - OpenAI / DeepSeek / scripted 三类 planner
 - `examples/agent-runner` 已支持 planner 重试和模型升级
@@ -245,7 +256,7 @@ go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
 - 多 agent 编排
 - Anthropic / Gemini adapter
 - HTTP API 形式的 planner service
-- 更复杂的 repo 修复任务集
+- 更大规模的 repo 修复任务集
 
 ## 9. 当前推荐
 
@@ -255,7 +266,7 @@ go test ./examples/agent-runner -run TestRealLLMAgentWorkflowAcceptance -v
 2. 然后切 `deepseek` 或 `openai`
 3. 先跑 `run-smoke`
 4. 再跑 `session-workflow`
-5. 最后跑 `test-and-fix`
+5. 最后跑 `test-and-fix` 或 `repo-bugfix`
 
 这样最容易定位问题出在：
 

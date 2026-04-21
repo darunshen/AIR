@@ -33,7 +33,7 @@ jobs:
       model: deepseek-chat
       escalation_model: deepseek-reasoner
       planner_retries: "1"
-      tasks: run-smoke,session-workflow,test-and-fix
+      tasks: run-smoke,session-workflow,test-and-fix,repo-bugfix
       runtime_provider: local
       upload_artifact: true
       allow_missing_secret: true
