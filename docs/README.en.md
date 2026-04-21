@@ -26,3 +26,4 @@ Rules:
 - [Operations Manual](operations-manual.en.md) | [中文](operations-manual.md)
 - [Release And Distribution](release-distribution.en.md) | [中文](release-distribution.md)
 - [LLM Acceptance Results](llm-acceptance-results.en.md) | [中文](llm-acceptance-results.md)
+- [OpenClaude Integration](openclaude-integration.en.md) | [中文](openclaude-integration.md)

@@ -266,6 +266,11 @@
     - 已将 scripted planner 样例纳入 `examples/agent-runner` 验收测试
     - 后续 P1/P2 的改动都以这些任务不退化为准
 
+- 设计 OpenClaude 的零侵入接入路径
+  - 已新增 `docs/openclaude-integration.md`
+  - 第一阶段目标不是改 OpenClaude 源码，而是让 OpenClaude gRPC server 运行在 AIR session / VM 内
+  - 后续需要补长驻进程管理、host <-> guest bridge、workspace 注入与结果回传
+
 ## P1: 调试与可观测性
 
 - guest ready 判定已接入

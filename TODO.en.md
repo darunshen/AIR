@@ -35,6 +35,12 @@ The top goal is a usable reference agent that can:
 - decide the next step from the result
 - surface stable failure reasons
 
+## OpenClaude Integration
+
+- document a zero-intrusion OpenClaude path first
+- run the OpenClaude gRPC server inside an AIR session / VM
+- add long-running process management, host <-> guest bridge, workspace injection, and result export later
+
 ## P1: Debuggability And Runtime Stability
 
 Continue improving:

@@ -26,3 +26,4 @@
 - [操作手册](operations-manual.md) | [English](operations-manual.en.md)
 - [发布与安装包交付](release-distribution.md) | [English](release-distribution.en.md)
 - [LLM 验收结果](llm-acceptance-results.md) | [English](llm-acceptance-results.en.md)
+- [OpenClaude 接入方案](openclaude-integration.md) | [English](openclaude-integration.en.md)
