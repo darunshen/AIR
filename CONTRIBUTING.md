@@ -1,5 +1,7 @@
 # Contributing to AIR
 
+[中文](CONTRIBUTING.zh-CN.md)
+
 Thank you for your interest in AIR.
 
 AIR is still in the early stage, so contributions in architecture, implementation, docs, testing, and community building are all useful.
@@ -23,6 +25,8 @@ AIR is still in the early stage, so contributions in architecture, implementatio
 - Keep changes focused and reviewable
 - Prefer small pull requests over large unrelated bundles
 - Match the repository structure and naming conventions in [AGENTS.md](AGENTS.md)
+- All user-facing documentation must ship in both Chinese and English
+- For paired docs, update both language versions in the same change
 - Update documentation when changing architecture or public behavior
 - Add tests when code paths become executable
 

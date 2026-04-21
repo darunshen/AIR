@@ -106,6 +106,7 @@ Hypervisor + Guest Agent + Rootfs
 
 ### Documentation
 
+- [Documentation Index](docs/README.en.md) / [文档索引](docs/README.md)
 - [Project Plan](docs/project-plan.md)
 - [Product Requirement Document](docs/prd.md)
 - [Technical Architecture](docs/technical-architecture.md)
@@ -231,6 +232,7 @@ Hypervisor + Guest Agent + Rootfs
 
 ### 文档
 
+- [文档索引](docs/README.md) / [Documentation Index](docs/README.en.md)
 - [项目计划](docs/project-plan.md)
 - [产品说明书](docs/prd.md)
 - [技术架构](docs/technical-architecture.md)

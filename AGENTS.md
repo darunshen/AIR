@@ -21,6 +21,16 @@ No project-specific commands are defined yet. When adding tooling, expose a smal
 
 If you introduce a language-specific toolchain, keep commands predictable and runnable from the repository root.
 
+## Documentation Language Rule
+
+All user-facing documentation must be maintained in both Chinese and English. Treat this as a repository rule, not an optional preference.
+
+- New docs must be added as a language pair in the same change
+- When updating an existing doc, update its counterpart in the same commit
+- Prefer paired files instead of mixed-language long-form docs
+- For docs under `docs/` and similar feature docs, use `name.md` for Chinese and `name.en.md` for English
+- For existing English-first root docs, add a Chinese companion such as `README.zh-CN.md` or `ROADMAP.zh-CN.md` when the file is not already bilingual
+
 ## Coding Style & Naming Conventions
 
 Use consistent formatting and keep style automation in-repo. Until a formatter is added:

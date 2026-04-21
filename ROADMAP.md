@@ -1,5 +1,7 @@
 # AIR Roadmap
 
+[中文](ROADMAP.zh-CN.md)
+
 ## Vision
 
 Build an open-source runtime that gives AI agents a safer default execution boundary through lightweight VM isolation.
