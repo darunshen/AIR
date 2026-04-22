@@ -10,6 +10,19 @@ Describe the Firecracker-based runtime design used to create isolated AIR sessio
 
 The host control plane manages session lifecycle, prepares runtime artifacts, starts Firecracker, and communicates with an in-guest agent over `vsock`.
 
+```mermaid
+flowchart TD
+    C[CLI / API] --> SM[Session Manager]
+    SM --> RT[VM Runtime: Firecracker]
+    RT --> API[Firecracker API]
+    RT --> J[Jailer]
+    RT --> A[Kernel / Rootfs / Socket / Logs]
+    RT --> VM[MicroVM]
+    VM --> LG[Linux Guest]
+    LG --> AG[air-agent]
+    LG --> WS[Workspace]
+```
+
 ## 3. Components
 
 - Session Manager
@@ -22,15 +35,35 @@ Each session should own its own runtime directory, including config, sockets, lo
 
 ## 5. Boot Flow
 
-- create session metadata
-- prepare runtime directory
-- configure Firecracker
-- boot guest
-- wait for guest agent readiness
+```mermaid
+flowchart TD
+    A[Create session metadata] --> B[Prepare runtime directory]
+    B --> C[Prepare kernel / rootfs / overlay]
+    C --> D[Start Firecracker process]
+    D --> E[Configure machine / boot / drives / vsock]
+    E --> F[Boot guest]
+    F --> G[Wait for guest agent readiness]
+    G --> H[Return session handle]
+```
 
 ## 6. Guest Communication
 
 `vsock` is the preferred transport because it cleanly matches host/guest boundaries and avoids ad-hoc polling.
+
+```mermaid
+sequenceDiagram
+    participant Host as Host VM Runtime
+    participant VS as vsock
+    participant Agent as air-agent
+    participant Shell as Guest Shell
+
+    Host->>VS: exec request JSON
+    VS->>Agent: deliver request
+    Agent->>Shell: run command with timeout
+    Shell-->>Agent: stdout / stderr / exit_code
+    Agent-->>VS: result JSON
+    VS-->>Host: structured ExecResult
+```
 
 ## 7. Rootfs Design
 
@@ -39,6 +72,14 @@ Use a stable base rootfs and derive a writable per-session disk. This keeps sess
 ## 8. Guest Startup Chain
 
 The guest should boot directly into the minimal service path required to bring up `air-agent`.
+
+```mermaid
+flowchart LR
+    A[kernel] --> B[init]
+    B --> C[mount proc / sys / dev]
+    C --> D[start air-agent]
+    D --> E[ready]
+```
 
 ## 9. Go Control Plane Integration
 

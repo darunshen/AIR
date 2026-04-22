@@ -8,7 +8,17 @@ Provide a VM-based execution boundary for untrusted AI-generated code while supp
 
 ## 2. System View
 
-`CLI / API -> Orchestrator -> Session Manager / VM Manager / Isolation Controller / Snapshot Engine -> Hypervisor + Guest Agent + Rootfs`
+```mermaid
+flowchart TD
+    C[CLI / API] --> O[Orchestrator]
+    O --> SM[Session Manager]
+    O --> VM[VM Manager]
+    O --> IC[Isolation Controller]
+    O --> SE[Snapshot Engine]
+    VM --> H[Hypervisor]
+    H --> G[Guest Agent]
+    H --> R[Rootfs / Overlay]
+```
 
 ## 3. Modules
 
@@ -22,8 +32,27 @@ Provide a VM-based execution boundary for untrusted AI-generated code while supp
 
 ## 4. Execution Flows
 
-- `run`: create VM, execute once, collect result, destroy VM
-- `session`: create VM, execute multiple commands, preserve state, destroy on delete
+### `run`
+
+```mermaid
+flowchart LR
+    A[Receive task] --> B[Start VM]
+    B --> C[Inject command / files]
+    C --> D[Guest executes]
+    D --> E[Collect result]
+    E --> F[Destroy VM]
+```
+
+### `session`
+
+```mermaid
+flowchart LR
+    A[Create session] --> B[Start VM]
+    B --> C[Execute multiple commands]
+    C --> D[Preserve state]
+    D --> E[Delete session]
+    E --> F[Destroy VM and overlay]
+```
 
 ## 5. State And Storage
 
@@ -32,6 +61,17 @@ AIR keeps runtime state, session metadata, and execution artifacts on the host s
 ## 6. Lifecycle Management
 
 The architecture requires explicit state transitions for session creation, execution, idle time, stop, and deletion.
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATED
+    CREATED --> RUNNING
+    RUNNING --> IDLE
+    IDLE --> RUNNING
+    RUNNING --> STOPPED
+    IDLE --> STOPPED
+    STOPPED --> DELETED
+```
 
 ## 7. Security Design
 

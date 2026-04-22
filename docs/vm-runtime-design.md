@@ -14,25 +14,17 @@
 
 ## 2. 总体架构
 
-```text
-CLI / API
-   |
-   v
-Session Manager
-   |
-   v
-VM Runtime (Firecracker)
-   |
-   +-- Firecracker API
-   +-- Jailer
-   +-- Kernel / Rootfs / Socket / Logs
-   |
-   v
-MicroVM
-   |
-   +-- Linux Guest
-   +-- air-agent
-   +-- Workspace
+```mermaid
+flowchart TD
+    C[CLI / API] --> SM[Session Manager]
+    SM --> RT[VM Runtime: Firecracker]
+    RT --> API[Firecracker API]
+    RT --> J[Jailer]
+    RT --> A[Kernel / Rootfs / Socket / Logs]
+    RT --> VM[MicroVM]
+    VM --> LG[Linux Guest]
+    LG --> AG[air-agent]
+    LG --> WS[Workspace]
 ```
 
 ## 3. 组件划分
@@ -107,15 +99,15 @@ runtime/firecracker/<session_id>/
 
 流程：
 
-```text
-1. 生成 session_id
-2. 准备运行目录
-3. 准备 kernel 和 rootfs
-4. 启动 firecracker 进程
-5. 通过 API 配置 machine / boot / drives / vsock
-6. 启动 microVM
-7. 等待 guest agent ready
-8. 返回 session_id
+```mermaid
+flowchart TD
+    A[生成 session_id] --> B[准备运行目录]
+    B --> C[准备 kernel / rootfs / overlay]
+    C --> D[启动 firecracker 进程]
+    D --> E[配置 machine / boot / drives / vsock]
+    E --> F[启动 microVM]
+    F --> G[等待 guest agent ready]
+    G --> H[返回 session_id]
 ```
 
 ### 5.2 Firecracker 配置要点
@@ -140,6 +132,21 @@ runtime/firecracker/<session_id>/
 - 比文件轮询更快、更清晰
 
 ## 6.2 通信模型
+
+```mermaid
+sequenceDiagram
+    participant Host as Host VM Runtime
+    participant VS as vsock
+    participant Agent as air-agent
+    participant Shell as Guest Shell
+
+    Host->>VS: exec request JSON
+    VS->>Agent: deliver request
+    Agent->>Shell: run command with timeout
+    Shell-->>Agent: stdout / stderr / exit_code
+    Agent-->>VS: result JSON
+    VS-->>Host: structured ExecResult
+```
 
 Host 发请求：
 
@@ -168,8 +175,12 @@ Guest 返回结果：
 
 Guest 启动后：
 
-```text
-init -> air-agent -> listen vsock -> handle exec
+```mermaid
+flowchart LR
+    A[init] --> B[start air-agent]
+    B --> C[listen vsock]
+    C --> D[ready handshake]
+    D --> E[handle exec requests]
 ```
 
 必要能力：
@@ -199,8 +210,12 @@ init -> air-agent -> listen vsock -> handle exec
 
 推荐 guest 启动链：
 
-```text
-kernel -> init -> mount proc/sys/dev -> start air-agent -> ready
+```mermaid
+flowchart LR
+    A[kernel] --> B[init]
+    B --> C[mount proc / sys / dev]
+    C --> D[start air-agent]
+    D --> E[ready]
 ```
 
 最小 `init` 需要完成：

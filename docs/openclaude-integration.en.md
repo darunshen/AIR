@@ -25,17 +25,14 @@ The most practical zero-intrusion path is not a plugin that replaces OpenClaude'
 
 Architecture:
 
-```text
-User / Wrapper Client
-        |
-        v
-AIR Session / Firecracker VM
-        |
-        v
-OpenClaude gRPC Server
-        |
-        v
-OpenClaude Internal Tools
+```mermaid
+flowchart TD
+    U[User / Wrapper Client] --> H[Host Bridge / Thin Proxy]
+    H --> A[AIR Session Manager]
+    A --> VM[Firecracker VM]
+    VM --> R[Guest Relay Service]
+    R --> O[OpenClaude gRPC Server]
+    O --> T[OpenClaude Internal Tools]
 ```
 
 This matters because:
@@ -79,6 +76,28 @@ For AIR, gRPC is a better first integration path because:
 - gRPC is easier to start, supervise, restart, and observe through AIR sessions
 - permission prompts, logs, and lifecycle are easier to standardize
 
+### 4.1 Communication Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Host Client
+    participant HB as Host Bridge
+    participant AIR as AIR Session
+    participant VS as vsock
+    participant GR as Guest Relay
+    participant OC as OpenClaude gRPC
+
+    C->>HB: gRPC request
+    HB->>AIR: ensure session is running
+    HB->>VS: open vsock stream
+    VS->>GR: forward bytes
+    GR->>OC: relay to 127.0.0.1:50051
+    OC-->>GR: streaming response / tool events
+    GR-->>VS: relay bytes
+    VS-->>HB: relay bytes
+    HB-->>C: gRPC streaming response
+```
+
 ## 5. Recommended Rollout
 
 ### Phase A: Zero-intrusion PoC
@@ -94,6 +113,17 @@ Steps:
 5. validate a real repo task: read files, execute commands, modify files, return results
 
 This phase is about proving the path works, not polishing packaging.
+
+```mermaid
+flowchart TD
+    A1[AIR creates session] --> A2[Prepare guest runtime]
+    A2 --> A3[Start OpenClaude gRPC server]
+    A3 --> A4[Start guest relay service]
+    A4 --> A5[Host bridge opens vsock path]
+    A5 --> A6[Send repo task request]
+    A6 --> A7[Guest completes read/write/exec/edit]
+    A7 --> A8[Return results and logs]
+```
 
 ### Phase B: AIR sidecar / launcher
 
@@ -190,6 +220,14 @@ Options include:
 - or a relay protocol through `air-agent`
 
 The best first direction is likely a host/guest relay built on top of the existing `air-agent` path, rather than exposing general guest networking.
+
+```mermaid
+flowchart LR
+    HC[Host Client] --> HB[Host Bridge]
+    HB --> V[vsock Channel]
+    V --> GRS[Guest Relay Service]
+    GRS --> OCG[OpenClaude gRPC localhost]
+```
 
 ### 6.3 Workspace preparation
 
