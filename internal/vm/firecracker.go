@@ -25,6 +25,7 @@ type firecrackerRuntime struct {
 	binary            string
 	kernelImage       string
 	rootfsImage       string
+	bootArgs          string
 	kvmDevice         string
 	memoryMiB         int
 	vcpuCount         int
@@ -88,6 +89,7 @@ func newFirecrackerRuntime(cfg Config) (Runtime, error) {
 		binary:            cfg.FirecrackerBinary,
 		kernelImage:       cfg.KernelImage,
 		rootfsImage:       cfg.RootfsImage,
+		bootArgs:          cfg.BootArgs,
 		kvmDevice:         cfg.KVMDevice,
 		memoryMiB:         cfg.MemoryMiB,
 		vcpuCount:         cfg.VCPUCount,
@@ -390,6 +392,67 @@ func (r *firecrackerRuntime) Inspect(sessionID string) (*InspectInfo, error) {
 	return info, nil
 }
 
+func (r *firecrackerRuntime) DialTCP(sessionID, address string, timeout time.Duration) (net.Conn, error) {
+	paths := r.paths(sessionID)
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+
+	dialVSockFn := r.dialVSockFn
+	if dialVSockFn == nil {
+		dialVSockFn = dialFirecrackerVSock
+	}
+
+	conn, err := dialVSockFn(paths.vsockPath, guestapi.DefaultVSockPort, timeout)
+	if err != nil {
+		return nil, errGuestAgentTransport(sessionID, paths.vsockPath, err)
+	}
+
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+
+	reader := bufio.NewReader(conn)
+	requestID := fmt.Sprintf("%s-proxy-%d", sessionID, time.Now().UnixNano())
+	req := guestapi.ExecRequest{
+		Type:      guestapi.MessageTypeProxy,
+		RequestID: requestID,
+		Network:   "tcp",
+		Address:   address,
+	}
+
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+
+	var result guestapi.ProxyResult
+	if err := json.NewDecoder(reader).Decode(&result); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if result.Type != guestapi.MessageTypeProxy {
+		_ = conn.Close()
+		return nil, fmt.Errorf("unexpected proxy response type: %s", result.Type)
+	}
+	if result.Status != "connected" {
+		_ = conn.Close()
+		if result.Error != "" {
+			return nil, errors.New(result.Error)
+		}
+		return nil, fmt.Errorf("unexpected proxy status: %s", result.Status)
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return &bufferedConn{
+		Conn:   conn,
+		reader: reader,
+	}, nil
+}
+
 func (r *firecrackerRuntime) preflight() error {
 	if _, err := exec.LookPath(r.binary); err != nil {
 		return errFirecrackerBinaryNotFound(r.binary, err)
@@ -516,7 +579,7 @@ func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) 
 		},
 		bootSource: firecrackerBootSource{
 			KernelImagePath: r.kernelImage,
-			BootArgs:        "console=ttyS0 reboot=k panic=1 pci=off",
+			BootArgs:        r.bootArgs,
 		},
 		rootfsDrive: firecrackerDrive{
 			DriveID:      "rootfs",

@@ -1,9 +1,13 @@
 package session
 
 import (
+	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -379,4 +383,267 @@ func TestRunRejectsInvalidResourceOptions(t *testing.T) {
 	if result.ErrorType != RunErrorTypeInvalidArgument {
 		t.Fatalf("expected invalid argument error type, got %q", result.ErrorType)
 	}
+}
+
+func TestOpenClaudeLifecycleUsesSessionManagedProcess(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "openclaude")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatalf("mkdir repo path: %v", err)
+	}
+
+	status, err := manager.StartOpenClaude(OpenClaudeStartOptions{
+		Provider: "local",
+		RepoPath: repoPath,
+		Command:  "while true; do sleep 1; done",
+		Host:     "127.0.0.1",
+		Port:     50051,
+	})
+	if err != nil {
+		t.Fatalf("start openclaude: %v", err)
+	}
+	if status.SessionID == "" {
+		t.Fatal("expected session id")
+	}
+	if !status.CreatedSession {
+		t.Fatal("expected start to create a session")
+	}
+	if !status.Running {
+		t.Fatal("expected openclaude to be running")
+	}
+	if status.PID <= 0 {
+		t.Fatalf("expected pid, got %d", status.PID)
+	}
+	if status.LogPath == "" || status.PIDPath == "" || status.MetadataPath == "" {
+		t.Fatalf("expected status paths, got %+v", status)
+	}
+
+	checked, err := manager.OpenClaudeStatus(status.SessionID)
+	if err != nil {
+		t.Fatalf("openclaude status: %v", err)
+	}
+	if !checked.Running {
+		t.Fatalf("expected running status, got %+v", checked)
+	}
+	if checked.PID != status.PID {
+		t.Fatalf("expected same pid %d, got %d", status.PID, checked.PID)
+	}
+
+	stopped, err := manager.StopOpenClaude(status.SessionID)
+	if err != nil {
+		t.Fatalf("stop openclaude: %v", err)
+	}
+	if stopped.Running {
+		t.Fatalf("expected stopped status, got %+v", stopped)
+	}
+	if stopped.StoppedAt == nil {
+		t.Fatal("expected stopped_at")
+	}
+
+	checked, err = manager.OpenClaudeStatus(status.SessionID)
+	if err != nil {
+		t.Fatalf("openclaude status after stop: %v", err)
+	}
+	if checked.Running {
+		t.Fatalf("expected stopped after stop, got %+v", checked)
+	}
+
+	if err := manager.Delete(status.SessionID); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+}
+
+func TestOpenClaudeRequiresConfiguration(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	if _, err := manager.StartOpenClaude(OpenClaudeStartOptions{Provider: "local"}); err == nil {
+		t.Fatal("expected missing repo path error")
+	}
+
+	s, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := manager.OpenClaudeStatus(s.ID); !errors.Is(err, ErrOpenClaudeNotConfigured) {
+		t.Fatalf("expected ErrOpenClaudeNotConfigured, got %v", err)
+	}
+}
+
+func TestResolveOpenClaudeRepoPathUsesGuestDefaultForFirecracker(t *testing.T) {
+	t.Helper()
+
+	got := resolveOpenClaudeRepoPath("firecracker", OpenClaudeStartOptions{})
+	if got != "/opt/openclaude" {
+		t.Fatalf("expected firecracker default guest repo, got %q", got)
+	}
+
+	got = resolveOpenClaudeRepoPath("firecracker", OpenClaudeStartOptions{
+		RepoPath: "/host/openclaude",
+	})
+	if got != "/host/openclaude" {
+		t.Fatalf("expected explicit repo path to be reused when guest path is absent, got %q", got)
+	}
+
+	got = resolveOpenClaudeRepoPath("firecracker", OpenClaudeStartOptions{
+		RepoPath:      "/host/openclaude",
+		GuestRepoPath: "/guest/openclaude",
+	})
+	if got != "/guest/openclaude" {
+		t.Fatalf("expected guest repo path to win, got %q", got)
+	}
+
+	got = resolveOpenClaudeRepoPath("local", OpenClaudeStartOptions{
+		RepoPath:      "/host/openclaude",
+		GuestRepoPath: "/guest/openclaude",
+	})
+	if got != "/host/openclaude" {
+		t.Fatalf("expected local repo path to win, got %q", got)
+	}
+}
+
+func TestDeleteStopsManagedOpenClaudeProcess(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "openclaude")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatalf("mkdir repo path: %v", err)
+	}
+
+	status, err := manager.StartOpenClaude(OpenClaudeStartOptions{
+		Provider: "local",
+		RepoPath: repoPath,
+		Command:  "while true; do sleep 1; done",
+	})
+	if err != nil {
+		t.Fatalf("start openclaude: %v", err)
+	}
+	if !status.Running || status.PID <= 0 {
+		t.Fatalf("expected running process, got %+v", status)
+	}
+
+	if err := manager.Delete(status.SessionID); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !testProcessExists(status.PID) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("expected managed process %d to stop after session delete", status.PID)
+}
+
+func TestDialOpenClaudeWithLocalProvider(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 4)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return
+		}
+		if string(buf) == "ping" {
+			_, _ = conn.Write([]byte("pong"))
+		}
+	}()
+
+	repoPath := filepath.Join(root, "openclaude")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatalf("mkdir repo path: %v", err)
+	}
+
+	started, err := manager.StartOpenClaude(OpenClaudeStartOptions{
+		Provider: "local",
+		RepoPath: repoPath,
+		Command:  "while true; do sleep 1; done",
+		Host:     "127.0.0.1",
+		Port:     listener.Addr().(*net.TCPAddr).Port,
+	})
+	if err != nil {
+		t.Fatalf("start openclaude: %v", err)
+	}
+	defer func() {
+		_, _ = manager.StopOpenClaude(started.SessionID)
+		_ = manager.Delete(started.SessionID)
+	}()
+
+	conn, status, err := manager.DialOpenClaude(started.SessionID, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial openclaude: %v", err)
+	}
+	defer conn.Close()
+	if !status.Running {
+		t.Fatalf("expected running status, got %+v", status)
+	}
+
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write to openclaude conn: %v", err)
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read from openclaude conn: %v", err)
+	}
+	if string(buf) != "pong" {
+		t.Fatalf("unexpected proxy response: %q", string(buf))
+	}
+}
+
+func testProcessExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return process.Signal(syscall.Signal(0)) == nil
 }

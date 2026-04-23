@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -146,6 +147,81 @@ func TestServerReady(t *testing.T) {
 	if result.Status != "ready" {
 		t.Fatalf("unexpected ready status: %s", result.Status)
 	}
+}
+
+func TestServerProxy(t *testing.T) {
+	t.Helper()
+
+	targetClient, targetServer := net.Pipe()
+	defer targetClient.Close()
+	defer targetServer.Close()
+
+	server := &Server{
+		execFn: defaultExec,
+		dialFn: func(network, address string) (net.Conn, error) {
+			if network != "tcp" {
+				t.Fatalf("unexpected network: %s", network)
+			}
+			if address != "127.0.0.1:50051" {
+				t.Fatalf("unexpected address: %s", address)
+			}
+			return targetClient, nil
+		},
+	}
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	go func() {
+		_ = server.handleStream(context.Background(), serverConn)
+	}()
+
+	if err := json.NewEncoder(clientConn).Encode(guestapi.ExecRequest{
+		Type:      guestapi.MessageTypeProxy,
+		RequestID: "proxy_1",
+		Network:   "tcp",
+		Address:   "127.0.0.1:50051",
+	}); err != nil {
+		t.Fatalf("encode proxy request: %v", err)
+	}
+
+	var result guestapi.ProxyResult
+	if err := json.NewDecoder(clientConn).Decode(&result); err != nil {
+		t.Fatalf("decode proxy response: %v", err)
+	}
+	if result.Status != "connected" {
+		t.Fatalf("unexpected proxy status: %+v", result)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 5)
+		if _, err := io.ReadFull(targetServer, buf); err != nil {
+			t.Errorf("read proxy payload at target: %v", err)
+			return
+		}
+		if string(buf) != "hello" {
+			t.Errorf("unexpected proxy payload: %q", string(buf))
+			return
+		}
+		if _, err := targetServer.Write([]byte("world")); err != nil {
+			t.Errorf("write proxy response at target: %v", err)
+		}
+	}()
+
+	if _, err := clientConn.Write([]byte("hello")); err != nil {
+		t.Fatalf("write client payload: %v", err)
+	}
+	buf := make([]byte, 5)
+	if _, err := io.ReadFull(clientConn, buf); err != nil {
+		t.Fatalf("read proxied response: %v", err)
+	}
+	if string(buf) != "world" {
+		t.Fatalf("unexpected proxied response: %q", string(buf))
+	}
+	_ = clientConn.Close()
+	<-done
 }
 
 func roundTrip(t *testing.T, conn net.Conn, req guestapi.ExecRequest, result *guestapi.ExecResult) {

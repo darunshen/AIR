@@ -269,7 +269,13 @@
 - 设计 OpenClaude 的零侵入接入路径
   - 已新增 `docs/openclaude-integration.md`
   - 第一阶段目标不是改 OpenClaude 源码，而是让 OpenClaude gRPC server 运行在 AIR session / VM 内
-  - 后续需要补长驻进程管理、host <-> guest bridge、workspace 注入与结果回传
+  - 已新增 `air agent openclaude start/status/stop`
+  - 已支持 OpenClaude-compatible 长驻进程托管、pid/log 元数据与 session 删除清理
+  - 已新增 `air agent openclaude forward`，支持 host 本地端口转发到 session 内 OpenClaude TCP endpoint
+  - 已新增 `scripts/prepare-openclaude-firecracker-rootfs.sh`，可把 Bun + OpenClaude 注入 Firecracker guest rootfs
+  - 已新增 `scripts/prepare-openclaude-alpine-rootfs.sh`，用于基于新版 Alpine minirootfs 构建 Bun/OpenClaude 可运行的 Firecracker guest rootfs
+  - 官方 demo rootfs 仍可用于 AIR 基础链路验证，但用户态过旧，不再作为 OpenClaude guest 的推荐基线
+  - 后续需要补 Firecracker guest 的 provider 出网能力、workspace 注入与结果回传
 
 ## P1: 调试与可观测性
 

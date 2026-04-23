@@ -18,12 +18,14 @@ import (
 type Server struct {
 	listener net.Listener
 	execFn   func(context.Context, string) (*guestapi.ExecResult, error)
+	dialFn   func(string, string) (net.Conn, error)
 }
 
 func NewServer(listener net.Listener) *Server {
 	return &Server{
 		listener: listener,
 		execFn:   defaultExec,
+		dialFn:   net.Dial,
 	}
 }
 
@@ -94,6 +96,9 @@ func (s *Server) handleStream(ctx context.Context, rw io.ReadWriter) error {
 			Status:    "ready",
 		})
 	}
+	if req.Type == guestapi.MessageTypeProxy {
+		return s.handleProxyStream(rw, encoder, req)
+	}
 
 	if req.Type != guestapi.MessageTypeExec {
 		result.Error = fmt.Sprintf("unsupported request type: %s", req.Type)
@@ -124,6 +129,66 @@ func (s *Server) handleStream(ctx context.Context, rw io.ReadWriter) error {
 	execResult.Type = guestapi.MessageTypeResult
 	execResult.RequestID = req.RequestID
 	return encoder.Encode(execResult)
+}
+
+func (s *Server) handleProxyStream(rw io.ReadWriter, encoder *json.Encoder, req guestapi.ExecRequest) error {
+	network := req.Network
+	if network == "" {
+		network = "tcp"
+	}
+	if req.Address == "" {
+		return encoder.Encode(guestapi.ProxyResult{
+			Type:      guestapi.MessageTypeProxy,
+			RequestID: req.RequestID,
+			Status:    "error",
+			Error:     "proxy address must not be empty",
+		})
+	}
+
+	dialFn := s.dialFn
+	if dialFn == nil {
+		dialFn = net.Dial
+	}
+
+	targetConn, err := dialFn(network, req.Address)
+	if err != nil {
+		return encoder.Encode(guestapi.ProxyResult{
+			Type:      guestapi.MessageTypeProxy,
+			RequestID: req.RequestID,
+			Status:    "error",
+			Error:     err.Error(),
+		})
+	}
+	defer targetConn.Close()
+
+	if err := encoder.Encode(guestapi.ProxyResult{
+		Type:      guestapi.MessageTypeProxy,
+		RequestID: req.RequestID,
+		Status:    "connected",
+	}); err != nil {
+		return err
+	}
+
+	copyErrCh := make(chan error, 2)
+	go func() {
+		_, err := io.Copy(targetConn, rw)
+		if tcpConn, ok := targetConn.(*net.TCPConn); ok {
+			_ = tcpConn.CloseWrite()
+		}
+		copyErrCh <- err
+	}()
+	go func() {
+		_, err := io.Copy(rw, targetConn)
+		copyErrCh <- err
+	}()
+
+	for i := 0; i < 2; i++ {
+		err := <-copyErrCh
+		if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
+			return err
+		}
+	}
+	return nil
 }
 
 func defaultExec(ctx context.Context, command string) (*guestapi.ExecResult, error) {

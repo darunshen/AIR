@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -11,6 +12,10 @@ type Runtime interface {
 	Exec(sessionID, command string, timeout time.Duration) (*ExecResult, error)
 	Stop(vmid string) error
 	Inspect(sessionID string) (*InspectInfo, error)
+}
+
+type TCPDialer interface {
+	DialTCP(sessionID, address string, timeout time.Duration) (net.Conn, error)
 }
 
 type ExecResult struct {
@@ -47,6 +52,7 @@ type Config struct {
 	FirecrackerBinary string
 	KernelImage       string
 	RootfsImage       string
+	BootArgs          string
 	KVMDevice         string
 	MemoryMiB         int
 	VCPUCount         int
@@ -74,6 +80,9 @@ func NewWithConfig(cfg Config) (Runtime, error) {
 	}
 	if cfg.KVMDevice == "" {
 		cfg.KVMDevice = defaultKVMDevice
+	}
+	if cfg.BootArgs == "" {
+		cfg.BootArgs = defaultFirecrackerBootArgs
 	}
 	if cfg.MemoryMiB <= 0 {
 		cfg.MemoryMiB = defaultFirecrackerMemoryMiB

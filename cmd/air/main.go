@@ -211,6 +211,63 @@ func main() {
 			usage()
 			os.Exit(1)
 		}
+	case "agent":
+		if len(args) < 3 {
+			usage()
+			os.Exit(1)
+		}
+		switch args[1] {
+		case "openclaude":
+			switch args[2] {
+			case "start":
+				opts, err := parseOpenClaudeStartFlags(args[3:])
+				if err != nil {
+					exitErr(err)
+				}
+				status, err := manager.StartOpenClaude(opts)
+				if err != nil {
+					exitErr(err)
+				}
+				printJSON(status)
+			case "status":
+				if len(args) != 4 {
+					exitErr(errors.New("usage: air agent openclaude status <session-id>"))
+				}
+				status, err := manager.OpenClaudeStatus(args[3])
+				if err != nil {
+					exitErr(err)
+				}
+				printJSON(status)
+			case "stop":
+				if len(args) != 4 {
+					exitErr(errors.New("usage: air agent openclaude stop <session-id>"))
+				}
+				status, err := manager.StopOpenClaude(args[3])
+				if err != nil {
+					exitErr(err)
+				}
+				printJSON(status)
+			case "forward":
+				opts, err := parseOpenClaudeForwardFlags(args[3:])
+				if err != nil {
+					exitErr(err)
+				}
+				ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+				defer stop()
+				fmt.Fprintf(os.Stderr, "forwarding %s -> openclaude session %s\n", opts.ListenAddress, opts.SessionID)
+				if err := manager.ForwardOpenClaude(ctx, opts.SessionID, session.OpenClaudeForwardOptions{
+					ListenAddress: opts.ListenAddress,
+				}); err != nil {
+					exitErr(err)
+				}
+			default:
+				usage()
+				os.Exit(1)
+			}
+		default:
+			usage()
+			os.Exit(1)
+		}
 	default:
 		usage()
 		os.Exit(1)
@@ -230,6 +287,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air session events <id> [--follow] [--tail=N]")
 	fmt.Fprintln(os.Stderr, "  air session exec <id> \"<command>\"")
 	fmt.Fprintln(os.Stderr, "  air session delete <id>")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude start [--session ID] [--provider local|firecracker] [--repo PATH] [--guest-repo PATH] [--host HOST] [--port 50051] [--command \"bun run scripts/start-grpc.ts\"]")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude status <session-id>")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude stop <session-id>")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude forward <session-id> [--listen 127.0.0.1:50052]")
 }
 
 func exitErr(err error) {
@@ -613,6 +674,138 @@ type runCLIOptions struct {
 	MemoryMiB int
 	VCPUCount int
 	Human     bool
+}
+
+type openClaudeForwardCLIOptions struct {
+	SessionID     string
+	ListenAddress string
+}
+
+func parseOpenClaudeStartFlags(args []string) (session.OpenClaudeStartOptions, error) {
+	var opts session.OpenClaudeStartOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--session":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("session must not be empty")
+			}
+			opts.SessionID = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--session="):
+			opts.SessionID = strings.TrimPrefix(arg, "--session=")
+			if opts.SessionID == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("session must not be empty")
+			}
+		case arg == "--provider":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("provider must not be empty")
+			}
+			opts.Provider = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--provider="):
+			opts.Provider = strings.TrimPrefix(arg, "--provider=")
+			if opts.Provider == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("provider must not be empty")
+			}
+		case arg == "--repo":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("repo must not be empty")
+			}
+			opts.RepoPath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--repo="):
+			opts.RepoPath = strings.TrimPrefix(arg, "--repo=")
+			if opts.RepoPath == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("repo must not be empty")
+			}
+		case arg == "--guest-repo":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("guest-repo must not be empty")
+			}
+			opts.GuestRepoPath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--guest-repo="):
+			opts.GuestRepoPath = strings.TrimPrefix(arg, "--guest-repo=")
+			if opts.GuestRepoPath == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("guest-repo must not be empty")
+			}
+		case arg == "--command":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("command must not be empty")
+			}
+			opts.Command = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--command="):
+			opts.Command = strings.TrimPrefix(arg, "--command=")
+			if opts.Command == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("command must not be empty")
+			}
+		case arg == "--host":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("host must not be empty")
+			}
+			opts.Host = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--host="):
+			opts.Host = strings.TrimPrefix(arg, "--host=")
+			if opts.Host == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("host must not be empty")
+			}
+		case arg == "--port":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("port must not be empty")
+			}
+			port, err := strconv.Atoi(args[i+1])
+			if err != nil || port <= 0 {
+				return session.OpenClaudeStartOptions{}, errors.New("port must be a positive integer")
+			}
+			opts.Port = port
+			i++
+		case strings.HasPrefix(arg, "--port="):
+			port, err := strconv.Atoi(strings.TrimPrefix(arg, "--port="))
+			if err != nil || port <= 0 {
+				return session.OpenClaudeStartOptions{}, errors.New("port must be a positive integer")
+			}
+			opts.Port = port
+		default:
+			return session.OpenClaudeStartOptions{}, fmt.Errorf("unknown openclaude flag: %s", arg)
+		}
+	}
+	return opts, nil
+}
+
+func parseOpenClaudeForwardFlags(args []string) (openClaudeForwardCLIOptions, error) {
+	opts := openClaudeForwardCLIOptions{
+		ListenAddress: "127.0.0.1:50052",
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--listen":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeForwardCLIOptions{}, errors.New("listen must not be empty")
+			}
+			opts.ListenAddress = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--listen="):
+			opts.ListenAddress = strings.TrimPrefix(arg, "--listen=")
+			if opts.ListenAddress == "" {
+				return openClaudeForwardCLIOptions{}, errors.New("listen must not be empty")
+			}
+		case strings.HasPrefix(arg, "--"):
+			return openClaudeForwardCLIOptions{}, fmt.Errorf("unknown openclaude forward flag: %s", arg)
+		default:
+			if opts.SessionID != "" {
+				return openClaudeForwardCLIOptions{}, errors.New("usage: air agent openclaude forward <session-id> [--listen 127.0.0.1:50052]")
+			}
+			opts.SessionID = arg
+		}
+	}
+	if opts.SessionID == "" {
+		return openClaudeForwardCLIOptions{}, errors.New("usage: air agent openclaude forward <session-id> [--listen 127.0.0.1:50052]")
+	}
+	return opts, nil
 }
 
 func parseRunFlags(args []string) (runCLIOptions, string, error) {

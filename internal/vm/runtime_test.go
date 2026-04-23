@@ -14,6 +14,7 @@ func TestNewDefaultsToLocalRuntime(t *testing.T) {
 	t.Setenv("AIR_FIRECRACKER_BIN", "")
 	t.Setenv("AIR_FIRECRACKER_KERNEL", "")
 	t.Setenv("AIR_FIRECRACKER_ROOTFS", "")
+	t.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "")
 	t.Setenv("AIR_KVM_DEVICE", "")
 
 	rt, err := New(filepath.Join(t.TempDir(), "runtime"))
@@ -33,6 +34,7 @@ func TestNewUsesProviderFromEnv(t *testing.T) {
 	t.Setenv("AIR_FIRECRACKER_BIN", "firecracker-custom")
 	t.Setenv("AIR_FIRECRACKER_KERNEL", "/tmp/kernel")
 	t.Setenv("AIR_FIRECRACKER_ROOTFS", "/tmp/rootfs")
+	t.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "console=ttyS0 init=/sbin/init")
 	t.Setenv("AIR_KVM_DEVICE", "/tmp/kvm")
 
 	rt, err := New(filepath.Join(t.TempDir(), "runtime"))
@@ -52,6 +54,9 @@ func TestNewUsesProviderFromEnv(t *testing.T) {
 	}
 	if firecracker.rootfsImage != "/tmp/rootfs" {
 		t.Fatalf("unexpected rootfs image: %s", firecracker.rootfsImage)
+	}
+	if firecracker.bootArgs != "console=ttyS0 init=/sbin/init" {
+		t.Fatalf("unexpected boot args: %s", firecracker.bootArgs)
 	}
 	if firecracker.kvmDevice != "/tmp/kvm" {
 		t.Fatalf("unexpected kvm device: %s", firecracker.kvmDevice)
@@ -110,6 +115,7 @@ func TestNewUsesBundledFirecrackerAssetsWhenEnvMissing(t *testing.T) {
 	t.Setenv("AIR_FIRECRACKER_BIN", "")
 	t.Setenv("AIR_FIRECRACKER_KERNEL", "")
 	t.Setenv("AIR_FIRECRACKER_ROOTFS", "")
+	t.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "")
 	t.Setenv("AIR_KVM_DEVICE", "")
 
 	rt, err := New(filepath.Join(root, "runtime"))

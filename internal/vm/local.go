@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -152,4 +153,15 @@ func (r *localRuntime) Inspect(sessionID string) (*InspectInfo, error) {
 		TaskPath:      taskDir,
 		EventsPath:    filepath.Join(base, "events.jsonl"),
 	}, nil
+}
+
+func (r *localRuntime) DialTCP(sessionID, address string, timeout time.Duration) (net.Conn, error) {
+	_, err := r.Inspect(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	return net.DialTimeout("tcp", address, timeout)
 }

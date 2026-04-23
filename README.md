@@ -343,6 +343,12 @@ Debugging commands:
 - `air session console <id> --follow [--tail=N]`
 - `air session events <id> [--tail=N]`
 - `air session events <id> --follow [--tail=N]`
+- `air agent openclaude start --repo ~/Documents/code/openclaude`
+- `air agent openclaude status <session-id>`
+- `air agent openclaude stop <session-id>`
+- `air agent openclaude forward <session-id> [--listen 127.0.0.1:50052]`
+- `scripts/prepare-openclaude-firecracker-rootfs.sh assets/firecracker/hello-rootfs-air.ext4 assets/firecracker/hello-rootfs-openclaude.ext4 ~/Documents/code/openclaude ~/.bun/bin/bun`
+- `scripts/prepare-openclaude-alpine-rootfs.sh assets/firecracker/openclaude-alpine-rootfs.ext4 ~/Documents/code/openclaude`
 
 Current console limitation:
 
@@ -354,3 +360,8 @@ Current status behavior:
 
 - `air session list` and `air session inspect` refresh session status from the runtime before printing
 - If the runtime directory still exists but the VM process has exited, the session status is reported as `stopped`
+- `air agent openclaude` manages a long-running OpenClaude-compatible process per session and persists metadata in the session runtime directory
+- `air agent openclaude forward` exposes the session's OpenClaude TCP endpoint on a host-side local port, which is the bridge path for Firecracker-backed sessions
+- `scripts/prepare-openclaude-firecracker-rootfs.sh` prepares a Firecracker guest image with Bun and OpenClaude baked in at `/opt/openclaude`
+- `scripts/prepare-openclaude-alpine-rootfs.sh` prepares a newer Alpine-based guest image for Bun/OpenClaude; this is the recommended Firecracker path for OpenClaude workloads
+- `AIR_FIRECRACKER_BOOT_ARGS` can override the Firecracker kernel command line when a guest image needs a different init or boot setup

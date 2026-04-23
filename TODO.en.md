@@ -39,7 +39,13 @@ The top goal is a usable reference agent that can:
 
 - document a zero-intrusion OpenClaude path first
 - run the OpenClaude gRPC server inside an AIR session / VM
-- add long-running process management, host <-> guest bridge, workspace injection, and result export later
+- `air agent openclaude start/status/stop` now exists
+- basic long-running process management, pid/log metadata, and cleanup on session delete are now implemented
+- `air agent openclaude forward` now provides a host local-port bridge to the session's OpenClaude TCP endpoint
+- `scripts/prepare-openclaude-firecracker-rootfs.sh` now bakes Bun + OpenClaude into a Firecracker guest rootfs
+- `scripts/prepare-openclaude-alpine-rootfs.sh` now provides a newer Alpine-based Bun/OpenClaude guest rootfs path
+- the official demo rootfs remains useful for AIR base validation, but it is no longer the recommended OpenClaude guest baseline
+- Firecracker guest egress for provider APIs, workspace injection, and result export still need to be added
 
 ## P1: Debuggability And Runtime Stability
 

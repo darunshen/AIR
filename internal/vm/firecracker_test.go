@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -179,6 +180,86 @@ while true; do sleep 1; done
 	}
 }
 
+func TestFirecrackerDialTCPViaGuestProxy(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	rtAny, err := NewWithConfig(Config{
+		Root:         filepath.Join(root, "runtime"),
+		Provider:     "firecracker",
+		VSockCIDBase: 100,
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+
+	rt, ok := rtAny.(*firecrackerRuntime)
+	if !ok {
+		t.Fatal("expected firecracker runtime")
+	}
+
+	clientConn, serverConn := net.Pipe()
+	rt.dialVSockFn = func(string, uint32, time.Duration) (net.Conn, error) {
+		return clientConn, nil
+	}
+
+	go func() {
+		defer serverConn.Close()
+		reader := bufio.NewReader(serverConn)
+
+		var req guestapi.ExecRequest
+		if err := json.NewDecoder(reader).Decode(&req); err != nil {
+			t.Errorf("decode proxy request: %v", err)
+			return
+		}
+		if req.Type != guestapi.MessageTypeProxy {
+			t.Errorf("unexpected proxy request type: %s", req.Type)
+			return
+		}
+		if req.Address != "127.0.0.1:50051" {
+			t.Errorf("unexpected proxy address: %s", req.Address)
+			return
+		}
+		if err := json.NewEncoder(serverConn).Encode(guestapi.ProxyResult{
+			Type:      guestapi.MessageTypeProxy,
+			RequestID: req.RequestID,
+			Status:    "connected",
+		}); err != nil {
+			t.Errorf("encode proxy result: %v", err)
+			return
+		}
+		buf := make([]byte, 4)
+		if _, err := io.ReadFull(reader, buf); err != nil {
+			t.Errorf("read proxied payload: %v", err)
+			return
+		}
+		if string(buf) != "ping" {
+			t.Errorf("unexpected proxied payload: %q", string(buf))
+			return
+		}
+		if _, err := serverConn.Write([]byte("pong")); err != nil {
+			t.Errorf("write proxied response: %v", err)
+		}
+	}()
+
+	conn, err := rt.DialTCP("sess_proxy", "127.0.0.1:50051", 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial tcp via guest proxy: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write to proxy conn: %v", err)
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read from proxy conn: %v", err)
+	}
+	if string(buf) != "pong" {
+		t.Fatalf("unexpected proxy conn response: %q", string(buf))
+	}
+}
+
 func TestFirecrackerPreflightRequiresAssets(t *testing.T) {
 	t.Helper()
 
@@ -314,6 +395,32 @@ func TestFirecrackerPayloadsUseConfiguredResources(t *testing.T) {
 	}
 	if payloads.machineConfig.VCPUCount != 2 {
 		t.Fatalf("unexpected vcpu count: %d", payloads.machineConfig.VCPUCount)
+	}
+	if payloads.bootSource.BootArgs != defaultFirecrackerBootArgs {
+		t.Fatalf("unexpected boot args: %s", payloads.bootSource.BootArgs)
+	}
+}
+
+func TestFirecrackerPayloadsUseConfiguredBootArgs(t *testing.T) {
+	t.Helper()
+
+	rtAny, err := NewWithConfig(Config{
+		Root:     t.TempDir(),
+		Provider: "firecracker",
+		BootArgs: "console=ttyS0 init=/sbin/init",
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+
+	rt, ok := rtAny.(*firecrackerRuntime)
+	if !ok {
+		t.Fatalf("expected firecracker runtime, got %T", rtAny)
+	}
+
+	payloads := rt.payloads("sess_boot_args", rt.paths("sess_boot_args"))
+	if payloads.bootSource.BootArgs != "console=ttyS0 init=/sbin/init" {
+		t.Fatalf("unexpected boot args: %s", payloads.bootSource.BootArgs)
 	}
 }
 

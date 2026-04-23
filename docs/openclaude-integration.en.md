@@ -132,22 +132,80 @@ Goal: make the PoC repeatable and operationally consistent.
 Possible shape:
 
 ```bash
-air agent openclaude start
-air agent openclaude stop
-air agent openclaude status
+air agent openclaude start --repo ~/Documents/code/openclaude
+air agent openclaude status <session-id>
+air agent openclaude stop <session-id>
+air agent openclaude forward <session-id> --listen 127.0.0.1:50052
 ```
 
-That implies a standard startup command, health check, log location, port handling, and cleanup behavior.
+AIR now implements this first launcher baseline:
+
+- default startup command: `bun run scripts/start-grpc.ts`
+- default bind address: `127.0.0.1:50051`
+- `--command` can override the startup command for tests or repo-specific differences
+- session runtime metadata is recorded in `openclaude.json`
+- repo-local state is recorded under `.air/openclaude/<session-id>/server.pid` and `server.log`
+- `air session delete <session-id>` attempts to stop the managed OpenClaude process before tearing down the session
+- `air agent openclaude forward` opens a local host TCP port and forwards it to the session's OpenClaude TCP endpoint
+- on `local`, this forwards directly to host TCP; on `firecracker`, it forwards through an `air-agent` vsock proxy sub-protocol into guest TCP
+
+Example:
+
+```bash
+status=$(air agent openclaude start \
+  --provider local \
+  --repo ~/Documents/code/openclaude)
+
+session_id=$(printf "%s" "$status" | jq -r .session_id)
+
+air agent openclaude forward "$session_id" --listen 127.0.0.1:50052
+air agent openclaude status "$session_id"
+air agent openclaude stop "$session_id"
+```
+
+Prerequisites:
+
+- the OpenClaude repo pointed to by `--repo` has already completed `bun install`
+- the current environment already contains the provider variables OpenClaude needs
+- for a DeepSeek / OpenAI-compatible path, that typically means `CLAUDE_CODE_USE_OPENAI=1`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, and `OPENAI_API_KEY`
+
+If the target is a Firecracker guest rather than the `local` provider, the recommended path is now to build a newer Alpine-based guest rootfs instead of forcing Bun onto the old demo rootfs:
+
+```bash
+scripts/prepare-openclaude-alpine-rootfs.sh \
+  assets/firecracker/openclaude-alpine-rootfs.ext4 \
+  ~/Documents/code/openclaude
+```
+
+Then use:
+
+```bash
+export AIR_FIRECRACKER_ROOTFS="$(pwd)/assets/firecracker/openclaude-alpine-rootfs.ext4"
+export AIR_FIRECRACKER_BOOT_ARGS="console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init"
+
+air agent openclaude start \
+  --provider firecracker \
+  --guest-repo /opt/openclaude
+```
+
+In this layout:
+
+- the fixed guest OpenClaude path is `/opt/openclaude`
+- the fixed guest Bun path is `/usr/local/bin/bun`
+- the guest also exposes `/usr/local/bin/openclaude-grpc`
+- the guest starts `air-agent` through `/etc/inittab` on boot
+- on the `firecracker` provider, AIR falls back to `/opt/openclaude` when `--guest-repo` is not explicitly provided
+- if you must keep an existing ext4 guest baseline, `scripts/prepare-openclaude-firecracker-rootfs.sh` still exists, but it only works when the guest userspace is already Bun-compatible
 
 ### Phase C: Productized bridge
 
 Goal: make host-side usage smooth.
 
-This would add an AIR-aware bridge that:
+Current direction:
 
-- forwards user requests to the OpenClaude server inside a session
-- tracks session lifecycle
-- supports reconnect / replay / policy controls when needed
+- AIR now has a base TCP bridge via `air agent openclaude forward`
+- the next layer is an OpenClaude-aware client / UX on top of that bridge
+- later we can add reconnect / replay / policy controls when needed
 
 ## 5.1 Capability Impact Matrix
 
@@ -199,14 +257,23 @@ After moving OpenClaude into AIR:
 
 ### 6.1 Long-running process support
 
-AIR is strongest today at command-style `exec`, but the OpenClaude gRPC server is a long-lived service process.
+The OpenClaude gRPC server is a long-lived service, so AIR needs background process management.
 
-AIR needs to confirm or extend:
+Current status:
 
-- background service launch
-- liveness detection
-- stop / cleanup behavior
-- session state when the service crashes
+- `air agent openclaude start` can launch a background process
+- basic liveness detection now exists through the pid file
+- `air agent openclaude stop` can stop the managed process
+- deleting a session now attempts to clean up the managed process first
+- `air agent openclaude forward` can now expose the session's OpenClaude TCP endpoint on the host
+- `AIR_FIRECRACKER_BOOT_ARGS` can now override the Firecracker kernel cmdline for guest-specific init requirements
+
+Still needed:
+
+- service readiness checks, not just pid existence
+- normalized crash reasons
+- Firecracker guest egress for provider APIs
+- validation with a real OpenClaude process inside Firecracker guest sessions
 
 ### 6.2 Host <-> guest communication path
 
@@ -257,20 +324,28 @@ These are either incomplete from an isolation perspective or too expensive for a
 
 ## 8. First-pass Acceptance Criteria
 
-A successful zero-intrusion PoC should prove:
+The launcher phase now covers:
 
-- OpenClaude server runs inside an AIR session / VM
+- AIR can create or reuse a session
+- AIR can start an OpenClaude-compatible long-running service inside that session
+- AIR can report pid, log path, port, and running state
+- AIR can stop the managed service
+- deleting the session can clean up the managed service
+
+The full zero-intrusion PoC still needs to prove:
+
+- OpenClaude server runs inside a Firecracker guest
+- the host can reach the guest OpenClaude gRPC server through a bridge
 - it can complete at least one real repo task
 - bash / file read / file write / file edit all occur in the guest
 - the host receives final results and logs
-- deleting the AIR session also cleans up the guest process and workspace
 
 ## 9. Recommended Next Steps
 
 Recommended order:
 
-1. validate long-running service behavior in AIR
-2. define a guest startup script for the OpenClaude gRPC server
+1. validate the real OpenClaude gRPC server on the `local` provider with `air agent openclaude start --repo ~/Documents/code/openclaude`
+2. run the same launcher flow on the `firecracker` provider
 3. define the minimal host <-> guest bridge
 4. run a single-repo PoC
 5. only then decide whether deeper code-level integration is needed

@@ -259,6 +259,12 @@ func (m *Manager) Delete(sessionID string) error {
 		return err
 	}
 
+	if _, err := m.StopOpenClaude(sessionID); err != nil &&
+		!errors.Is(err, ErrOpenClaudeNotConfigured) &&
+		!errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
 	if err := runtime.Stop(s.VMID); err != nil {
 		return err
 	}
