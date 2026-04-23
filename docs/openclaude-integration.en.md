@@ -275,7 +275,7 @@ Still needed:
 - service readiness checks, not just pid existence
 - normalized crash reasons
 - Firecracker guest egress for provider APIs
-- validation with a real OpenClaude process inside Firecracker guest sessions and workspace result export
+- validation of a real OpenClaude task inside Firecracker guest sessions and workspace result export
 
 ### 6.2 Host <-> guest communication path
 

@@ -368,7 +368,9 @@ runtime/sessions/local/<session_id>/
 
 ```text
 runtime/sessions/firecracker/<session_id>/
-  overlay.ext4
+  rootfs.ext4
+  workspace.ext4
+  workspace-upper.ext4
   firecracker.sock
   firecracker.pid
   firecracker.vsock
@@ -384,7 +386,9 @@ runtime/sessions/firecracker/<session_id>/
 
 说明：
 
-- `overlay.ext4`：从基础 rootfs 复制出的每 session 独立可写根盘
+- `rootfs.ext4`：从基础 rootfs 复制出的每 session 私有根盘
+- `workspace.ext4`：当使用 `--workspace` 时生成的 host repo 只读镜像
+- `workspace-upper.ext4`：当使用 `--workspace` 时生成的 guest workspace 写层
 - `firecracker.sock`：Host 访问 Firecracker API 的 Unix socket
 - `firecracker.pid`：Firecracker 进程 PID
 - `firecracker.vsock`：预留给 Host/Guest `vsock` 通信的 Unix socket 路径
@@ -399,7 +403,7 @@ runtime/sessions/firecracker/<session_id>/
 
 - `Start()` 能启动 Firecracker
 - `Exec()` 能通过 `vsock` 真实执行命令
-- 每 session 独立 `overlay.ext4` 生效
+- 每 session 独立 `rootfs.ext4` 生效
 - `Stop()` 能正常清理
 - 运行目录产物完整
 

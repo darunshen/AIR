@@ -123,7 +123,7 @@ flowchart LR
     B --> C[多次 exec]
     C --> D[保留状态]
     D --> E[delete]
-    E --> F[销毁 VM 与 overlay]
+    E --> F[销毁 VM 与 session 磁盘]
 ```
 
 ## 5. 状态与存储
@@ -134,8 +134,10 @@ flowchart LR
 
 文件系统分层：
 
-- `base.img`：只读
-- `overlay.img`：每个 session 独立写层
+- 基础 `rootfs.ext4`：host 侧可复用基础镜像
+- session `rootfs.ext4`：每个 session 私有根盘
+- `workspace.ext4`：可选的 host repo 只读快照
+- `workspace-upper.ext4`：可选的 guest workspace 写层
 
 ## 6. 生命周期管理
 

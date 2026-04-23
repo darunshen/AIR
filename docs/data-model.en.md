@@ -18,6 +18,23 @@ Define stable runtime objects for sessions, VMs, requests, results, and local pe
 
 The host persists state in a local store such as `sessions.json` plus per-session runtime directories.
 
+For Firecracker, the current runtime layout is:
+
+```text
+runtime/
+  sessions/
+    firecracker/
+      sess_123/
+        rootfs.ext4
+        workspace.ext4
+        workspace-upper.ext4
+        console.log
+        events.jsonl
+        config/
+```
+
+`rootfs.ext4` is the session-private root disk copied from the base rootfs. When `--workspace` is used, AIR also builds a read-only `workspace.ext4` plus a writable `workspace-upper.ext4`, then mounts them as `/workspace` inside the guest through overlayfs.
+
 ## 4. Guest Communication Format
 
 Request and response payloads need a stable schema so the host can distinguish protocol errors from command failures.

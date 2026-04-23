@@ -314,7 +314,9 @@ Startup shortcut:
 
 Firecracker runtime layout:
 
-- `runtime/sessions/firecracker/<session_id>/overlay.ext4`
+- `runtime/sessions/firecracker/<session_id>/rootfs.ext4`
+- `runtime/sessions/firecracker/<session_id>/workspace.ext4` when `--workspace` is used
+- `runtime/sessions/firecracker/<session_id>/workspace-upper.ext4` when `--workspace` is used
 - `runtime/sessions/firecracker/<session_id>/firecracker.sock`
 - `runtime/sessions/firecracker/<session_id>/firecracker.pid`
 - `runtime/sessions/firecracker/<session_id>/console.log`
@@ -326,7 +328,7 @@ Firecracker runtime layout:
 Real-environment lifecycle test:
 
 - `AIR_FIRECRACKER_INTEGRATION=1 go test ./internal/vm -run TestFirecrackerIntegrationLifecycle`
-- The test validates `start -> exec -> stop`, non-empty console output, and session overlay wiring
+- The test validates `start -> exec -> stop`, non-empty console output, and per-session rootfs wiring
 - The test is skipped unless Linux, `/dev/kvm`, Firecracker, kernel, and rootfs are all available
 
 Debugging commands:
@@ -366,6 +368,7 @@ Current status behavior:
 - `air agent openclaude forward` exposes the session's OpenClaude TCP endpoint on a host-side local port, which is the bridge path for Firecracker-backed sessions
 - `air session create --workspace` and `air run --workspace` can now build a read-only `workspace.ext4` plus a writable `workspace-upper.ext4` for Firecracker sessions
 - when a Firecracker session has a workspace image, the guest mounts `/workspace` via overlayfs and guest commands default to `/workspace`
+- the `/workspace` overlayfs flow has been validated on a real Firecracker guest; host source files remain unchanged after guest writes
 - `scripts/prepare-openclaude-firecracker-rootfs.sh` prepares a Firecracker guest image with Bun and OpenClaude baked in at `/opt/openclaude`
 - `scripts/prepare-openclaude-alpine-rootfs.sh` prepares a newer Alpine-based guest image for Bun/OpenClaude; this is the recommended Firecracker path for OpenClaude workloads
 - `AIR_FIRECRACKER_BOOT_ARGS` can override the Firecracker kernel command line when a guest image needs a different init or boot setup

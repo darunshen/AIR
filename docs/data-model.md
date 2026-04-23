@@ -36,13 +36,15 @@ created / running / idle / stopped / deleted / error
 
 ```go
 type VM struct {
-    ID         string    `json:"id"`
-    SessionID  string    `json:"session_id"`
-    Status     string    `json:"status"`
-    RootfsPath string    `json:"rootfs_path"`
-    OverlayPath string   `json:"overlay_path"`
-    PID        int       `json:"pid"`
-    CreatedAt  time.Time `json:"created_at"`
+    ID                string    `json:"id"`
+    SessionID         string    `json:"session_id"`
+    Status            string    `json:"status"`
+    RootfsPath        string    `json:"rootfs_path"`
+    WorkspacePath     string    `json:"workspace_path,omitempty"`
+    WorkspaceImagePath string   `json:"workspace_image_path,omitempty"`
+    WorkspaceUpperPath string   `json:"workspace_upper_path,omitempty"`
+    PID               int       `json:"pid"`
+    CreatedAt         time.Time `json:"created_at"`
 }
 ```
 
@@ -162,10 +164,19 @@ data/
   sessions.json
 runtime/
   sessions/
-    sess_123/
-      overlay.img
-      task/
-      logs/
+    firecracker/
+      sess_123/
+        rootfs.ext4
+        workspace.ext4
+        workspace-upper.ext4
+        console.log
+        events.jsonl
+        config/
+    local/
+      sess_456/
+        workspace/
+        task/
+        events.jsonl
 ```
 
 ## 7. 后续演进

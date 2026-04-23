@@ -51,12 +51,19 @@ flowchart LR
     B --> C[Execute multiple commands]
     C --> D[Preserve state]
     D --> E[Delete session]
-    E --> F[Destroy VM and overlay]
+    E --> F[Destroy VM and session disks]
 ```
 
 ## 5. State And Storage
 
 AIR keeps runtime state, session metadata, and execution artifacts on the host so operators can inspect and recover runtime information.
+
+Current Firecracker storage layout:
+
+- base `rootfs.ext4`: reusable host-side base image
+- session `rootfs.ext4`: per-session root disk
+- `workspace.ext4`: optional read-only host repo snapshot
+- `workspace-upper.ext4`: optional writable guest workspace layer
 
 ## 6. Lifecycle Management
 
@@ -79,7 +86,7 @@ Default deny networking, per-session isolation, bounded resources, and clear hos
 
 ## 8. Technology Direction
 
-Firecracker is the preferred hypervisor path, with guest communication moving toward `vsock` and storage evolving toward `base image + overlay`.
+Firecracker is the preferred hypervisor path, with guest communication moving toward `vsock` and storage evolving from copied session root disks toward a true COW rootfs model.
 
 ## 9. Future Evolution
 

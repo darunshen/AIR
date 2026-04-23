@@ -31,13 +31,45 @@ The manual covers:
 
 The Firecracker path adds environment variables, runtime validation, session lifecycle checks, and access to console and event logs.
 
+When `--workspace` is used, AIR also prepares:
+
+- a session-private `rootfs.ext4`
+- a read-only `workspace.ext4`
+- a writable `workspace-upper.ext4`
+
+Inside the guest, `workspace.ext4` and `workspace-upper.ext4` are mounted as an overlayfs-backed `/workspace`.
+
 ## 6. Runtime Directory Layout
 
 AIR persists runtime state on the host so operators can inspect sessions, config files, sockets, metrics, and logs.
 
+Typical Firecracker layout:
+
+```text
+runtime/sessions/firecracker/<session_id>/
+  rootfs.ext4
+  workspace.ext4
+  workspace-upper.ext4
+  firecracker.sock
+  firecracker.pid
+  firecracker.vsock
+  console.log
+  events.jsonl
+  config/
+```
+
+`rootfs.ext4` is the per-session root disk copied from the base rootfs. `workspace.ext4` and `workspace-upper.ext4` are only present when a workspace is attached.
+
 ## 7. Real-Machine Lifecycle Validation
 
 Use create, exec, inspect, console, events, and delete as the standard validation loop.
+
+The current real-machine validation baseline is:
+
+- `Start()` succeeds
+- `Exec()` works over `vsock`
+- per-session `rootfs.ext4` wiring works
+- `/workspace` overlayfs works when a workspace is attached
 
 ## 8. Common Failures
 

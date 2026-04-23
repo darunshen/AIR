@@ -16,13 +16,12 @@ Rootfs management must support:
 
 ## 2. Current State
 
-The current Firecracker runtime already uses a per-session writable root disk:
+The current Firecracker runtime already uses a per-session root disk file:
 
 - the host has a base `rootfs.ext4`
-- session startup copies it into `overlay.ext4`
-- Firecracker boots with `overlay.ext4` as the writable root drive
-
-In the current implementation, `overlay.ext4` means "session-private root disk copy". It is not Linux overlayfs.
+- session startup copies it into a session-private `rootfs.ext4`
+- without a workspace, the session root disk is used as a writable root drive
+- with a workspace, the session root disk is used as a read-only root drive
 
 This is simple and clear from an isolation perspective. The downside is that copying the whole rootfs increases startup cost and disk usage.
 
@@ -64,9 +63,10 @@ Each session must have independent writable root disk state.
 
 The first phase can keep the current implementation:
 
-- copy the base rootfs into `overlay.ext4` at startup
-- use `overlay.ext4` as the Firecracker root drive
-- delete `overlay.ext4` when the session is deleted
+- copy the base rootfs into a session-private `rootfs.ext4` at startup
+- without a workspace, use `rootfs.ext4` as a writable root drive
+- with a workspace, use `rootfs.ext4` as a read-only root drive
+- delete the session-private `rootfs.ext4` when the session is deleted
 
 Future optimizations:
 
@@ -126,7 +126,7 @@ Each Firecracker session should eventually have this host-side layout:
 
 ```text
 runtime/sessions/firecracker/<session-id>/
-  overlay.ext4
+  rootfs.ext4
   workspace.ext4
   workspace-upper.ext4
   firecracker.sock
@@ -141,7 +141,7 @@ runtime/sessions/firecracker/<session-id>/
 
 Meaning:
 
-- `overlay.ext4` is the session root disk writable state
+- `rootfs.ext4` is the session-private root disk file
 - `workspace.ext4` is a read-only snapshot of the host repo
 - `workspace-upper.ext4` is the session workspace writable layer
 - `config/*` records Firecracker drive configuration for diagnosis and replay
@@ -168,6 +168,12 @@ Meaning:
 
 ### 8.3 Result export
 
+Current status:
+
+- the `/workspace` overlayfs mount has been validated in a real Firecracker guest
+- the original host repo remains unchanged after guest writes
+- `workspace-upper.ext4` now receives guest writes
+
 The first version should export the merged view:
 
 - guest packages `/workspace`
@@ -181,7 +187,7 @@ A later version can optimize this into upperdir-only diff export.
 On session deletion:
 
 - stop Firecracker
-- keep or delete `overlay.ext4`
+- keep or delete the session-private `rootfs.ext4`
 - keep or delete `workspace-upper.ext4`
 - preserve exported workspace results according to user options
 
@@ -250,4 +256,9 @@ First-version acceptance criteria:
 - guest has `/workspace`
 - host source repo remains unchanged after guest writes to `/workspace`
 - writes are observable in `workspace-upper.ext4`
-- OpenClaude can run a real task inside `/workspace`
+- `/workspace` overlayfs works in a real Firecracker guest
+
+Still not finished:
+
+- `air session export-workspace <id>` or an equivalent result export path
+- validation of a real OpenClaude task inside Firecracker guests

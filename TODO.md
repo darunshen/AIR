@@ -55,8 +55,9 @@
   - 会生成可自动发现的 `assets/firecracker/hello-rootfs-air.ext4`
 
 - Firecracker 每 session 独立可写根盘已接入
-  - 启动时会从基础 rootfs 复制出 `overlay.ext4`
-  - Firecracker 实际挂载的是 session 自己的 `overlay.ext4`
+  - 启动时会从基础 rootfs 复制出 session 私有 `rootfs.ext4`
+  - 无 workspace 时，Firecracker 挂载的是 session 自己的可写 `rootfs.ext4`
+  - 有 workspace 时，Firecracker 挂载的是 session 自己的只读 `rootfs.ext4`
   - session 删除时会一起清理
 
 - 可观测性已补到运行链路
@@ -277,7 +278,8 @@
   - 官方 demo rootfs 仍可用于 AIR 基础链路验证，但用户态过旧，不再作为 OpenClaude guest 的推荐基线
   - 已支持 `air session create --provider firecracker --workspace ...`，host repo 会构建为只读 `workspace.ext4`，并在 guest 内通过 overlayfs 暴露为 `/workspace`
   - 已支持 session 私有 `workspace-upper.ext4` 写层，guest 修改不会污染 host 原 repo
-  - 后续需要补 Firecracker guest 的 provider 出网能力与 workspace 结果导出
+  - `/workspace` overlayfs 已在真实 Firecracker guest 中验收通过
+  - 后续需要补 Firecracker guest 的 provider 出网能力、workspace 结果导出，以及真实 OpenClaude 任务验收
 
 ## P1: 调试与可观测性
 
@@ -309,7 +311,7 @@
 
 - 扩大 Firecracker 集成测试覆盖
   - 校验 `console.log` 非空
-  - 校验 session overlay 生效
+  - 校验 session 私有 `rootfs.ext4` / workspace overlay 生效
   - 校验事件日志包含 ready / exec
   - 校验真实 `delete` 后目录清理
   - 校验 demo 资产自动发现路径
@@ -340,7 +342,7 @@
   - 已先基于官方 demo rootfs 跑通启动与 `exec`
   - 再切到自维护 rootfs
 
-- 将当前“复制基础 rootfs 到 `overlay.ext4`”演进为真正的 COW overlay
+- 将当前“复制基础 rootfs 到 session 私有 `rootfs.ext4`”演进为真正的 COW overlay
 - 明确 overlay 方案与目录布局
 - 评估 rootfs 构建时如何保留 root ownership / device 节点
 

@@ -99,7 +99,7 @@ func newFirecrackerRuntime(cfg Config) (Runtime, error) {
 		vcpuCount:         cfg.VCPUCount,
 		vsockCIDBase:      cfg.VSockCIDBase,
 		startupTimeout:    5 * time.Second,
-		guestReadyTimeout: 10 * time.Second,
+		guestReadyTimeout: 60 * time.Second,
 		httpClientTimeout: 3 * time.Second,
 	}, nil
 }
@@ -223,7 +223,7 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 		}
 	}
 	if payloads.workspaceUpperDrive != nil {
-		if err := putJSONFn(client, "/drives/workspace-upper", payloads.workspaceUpperDrive); err != nil {
+		if err := putJSONFn(client, "/drives/workspace_upper", payloads.workspaceUpperDrive); err != nil {
 			_ = cmd.Process.Kill()
 			return "", fmt.Errorf("configure firecracker workspace upper drive: %w", err)
 		}
@@ -651,7 +651,7 @@ func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) 
 	}
 	if _, err := os.Stat(paths.workspaceUpperPath); err == nil {
 		payloads.workspaceUpperDrive = &firecrackerDrive{
-			DriveID:      "workspace-upper",
+			DriveID:      "workspace_upper",
 			PathOnHost:   paths.workspaceUpperPath,
 			IsRootDevice: false,
 			IsReadOnly:   false,

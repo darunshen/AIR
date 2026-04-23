@@ -72,7 +72,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH:-$(go env GOARCH)}" \
 
 cat >"${tmpdir}/air-agent.start" <<EOF
 #!/bin/sh
-LOG_FILE=/tmp/air-agent.log
+LOG_FILE=/run/air-agent.log
 echo "[air-agent] boot hook start" >>"\${LOG_FILE}"
 echo "[air-agent] boot hook start" >>/dev/console 2>&1 || true
 if [ -b /dev/vdb ] && [ -b /dev/vdc ]; then
@@ -81,9 +81,20 @@ if [ -b /dev/vdb ] && [ -b /dev/vdc ]; then
   mkdir -p /mnt/workspace-rw/upper /mnt/workspace-rw/work
   mount -t overlay overlay -o lowerdir=/mnt/workspace-ro,upperdir=/mnt/workspace-rw/upper,workdir=/mnt/workspace-rw/work /workspace >>"\${LOG_FILE}" 2>&1 || true
 fi
-/usr/bin/air-agent --network vsock --port ${DEFAULT_PORT} >>"\${LOG_FILE}" 2>&1 &
-echo "[air-agent] launched pid=\$!" >>"\${LOG_FILE}"
-echo "[air-agent] launched" >>/dev/console 2>&1 || true
+(
+  /usr/bin/air-agent --network vsock --port ${DEFAULT_PORT} >>"\${LOG_FILE}" 2>&1
+  code=\$?
+  echo "[air-agent] exited code=\${code}" >>"\${LOG_FILE}"
+  echo "[air-agent] exited code=\${code}" >>/dev/console 2>&1 || true
+) &
+pid=\$!
+echo "[air-agent] launched pid=\${pid}" >>"\${LOG_FILE}"
+echo "[air-agent] launched pid=\${pid}" >>/dev/console 2>&1 || true
+sleep 1
+if ! kill -0 "\${pid}" 2>/dev/null; then
+  echo "[air-agent] died during startup" >>/dev/console 2>&1 || true
+  cat "\${LOG_FILE}" >>/dev/console 2>&1 || true
+fi
 EOF
 chmod 0755 "${tmpdir}/air-agent.start"
 

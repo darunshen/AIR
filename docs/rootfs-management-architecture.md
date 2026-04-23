@@ -16,13 +16,12 @@
 
 ## 2. 当前状态
 
-当前 Firecracker runtime 已经采用每 session 独立根盘：
+当前 Firecracker runtime 已经采用每 session 独立根盘文件：
 
 - host 上有一个基础 `rootfs.ext4`
-- session 启动时复制为 `overlay.ext4`
-- Firecracker 以 `overlay.ext4` 作为可写 root drive 启动
-
-这个 `overlay.ext4` 名字里的 overlay 表示“session 私有根盘副本”，不是 Linux overlayfs。
+- session 启动时复制为 session 私有 `rootfs.ext4`
+- 没有 workspace 时，session 根盘按可写 root drive 启动
+- 有 workspace 时，session 根盘按只读 root drive 启动
 
 当前方式的优点是实现简单、隔离清楚；缺点是复制完整 rootfs 会增加启动开销和磁盘占用。
 
@@ -64,9 +63,10 @@ flowchart LR
 
 第一阶段继续沿用现有实现：
 
-- 启动时复制基础 rootfs 为 `overlay.ext4`
-- `overlay.ext4` 作为 Firecracker root drive
-- session 删除时删除 `overlay.ext4`
+- 启动时复制基础 rootfs 为 session 私有 `rootfs.ext4`
+- 无 workspace 时，`rootfs.ext4` 作为可写 root drive
+- 有 workspace 时，`rootfs.ext4` 作为只读 root drive
+- session 删除时删除 session 私有 `rootfs.ext4`
 
 后续优化方向：
 
@@ -126,7 +126,7 @@ guest 对 `/workspace` 的修改只会落到 `workspace-upper.ext4`。
 
 ```text
 runtime/sessions/firecracker/<session-id>/
-  overlay.ext4
+  rootfs.ext4
   workspace.ext4
   workspace-upper.ext4
   firecracker.sock
@@ -141,7 +141,7 @@ runtime/sessions/firecracker/<session-id>/
 
 其中：
 
-- `overlay.ext4` 是 session 根盘写层
+- `rootfs.ext4` 是 session 私有根盘文件
 - `workspace.ext4` 是 host repo 的只读快照
 - `workspace-upper.ext4` 是 guest workspace 的 session 写层
 - `config/*` 记录 Firecracker drive 配置，便于诊断和复现
@@ -168,6 +168,12 @@ runtime/sessions/firecracker/<session-id>/
 
 ### 8.3 导出结果
 
+当前状态：
+
+- `/workspace` 的 overlayfs 挂载已经在真实 Firecracker guest 中验证通过
+- host 原 repo 在 guest 写入后保持不变
+- `workspace-upper.ext4` 已承接 guest 写入
+
 第一版推荐导出 merged 视图：
 
 - guest 内把 `/workspace` 打包
@@ -181,7 +187,7 @@ runtime/sessions/firecracker/<session-id>/
 删除 session 时：
 
 - 停止 Firecracker
-- 保留或删除 `overlay.ext4`
+- 保留或删除 session 私有 `rootfs.ext4`
 - 保留或删除 `workspace-upper.ext4`
 - 按用户选项保留导出的 workspace 结果
 
@@ -250,4 +256,9 @@ Firecracker 需要至少三类 block device：
 - guest 内存在 `/workspace`
 - guest 修改 `/workspace` 后，host 原 repo 不变
 - `workspace-upper.ext4` 中可观察到写入结果
-- OpenClaude 可以在 `/workspace` 执行一个真实任务
+- Firecracker guest 内 `/workspace` overlayfs 在真实环境中可用
+
+仍未完成：
+
+- `air session export-workspace <id>` 或等价结果导出命令
+- Firecracker guest 内真实 OpenClaude 任务验收
