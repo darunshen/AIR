@@ -72,6 +72,47 @@ func listenVSock(port uint32) (net.Listener, error) {
 	}, nil
 }
 
+func dialHostVSock(port uint32) (net.Conn, error) {
+	fd, err := syscall.Socket(vsockAF, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open host vsock dialer: %w", err)
+	}
+	addr := rawSockaddrVM{
+		Family: vsockAF,
+		Port:   port,
+		CID:    HostVSockCID,
+	}
+	if err := connectVSock(fd, &addr); err != nil {
+		_ = syscall.Close(fd)
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), fmt.Sprintf("vsock-host-conn-%d", fd))
+	return &vsockConn{
+		file: file,
+		localAddr: vsockAddr{
+			cid:  vsockCIDAny,
+			port: port,
+		},
+		remoteAddr: vsockAddr{
+			cid:  HostVSockCID,
+			port: port,
+		},
+	}, nil
+}
+
+func connectVSock(fd int, addr *rawSockaddrVM) error {
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_CONNECT,
+		uintptr(fd),
+		uintptr(unsafe.Pointer(addr)),
+		unsafe.Sizeof(*addr),
+	)
+	if errno != 0 {
+		return fmt.Errorf("connect vsock %d:%d: %w", addr.CID, addr.Port, errno)
+	}
+	return nil
+}
+
 func bindVSock(fd int, addr *rawSockaddrVM) error {
 	_, _, errno := syscall.Syscall(
 		syscall.SYS_BIND,

@@ -11,10 +11,12 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/darunshen/AIR/internal/buildinfo"
+	"github.com/darunshen/AIR/internal/egressproxy"
 	"github.com/darunshen/AIR/internal/install"
 	"github.com/darunshen/AIR/internal/model"
 	"github.com/darunshen/AIR/internal/session"
@@ -22,15 +24,28 @@ import (
 )
 
 func main() {
-	manager, err := session.NewManager()
-	if err != nil {
-		exitErr(err)
-	}
-
 	args := os.Args[1:]
 	if len(args) == 0 {
 		usage()
 		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "__firecracker-egress-proxy":
+		if len(args) != 2 {
+			exitErr(errors.New("usage: air __firecracker-egress-proxy <unix-socket>"))
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := egressproxy.ServeUnixHTTPProxy(ctx, args[1]); err != nil {
+			exitErr(err)
+		}
+		return
+	}
+
+	manager, err := session.NewManager()
+	if err != nil {
+		exitErr(err)
 	}
 
 	switch args[0] {

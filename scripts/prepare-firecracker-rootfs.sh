@@ -30,6 +30,8 @@ fi
 SOURCE_ROOTFS="${1:-assets/firecracker/hello-rootfs.ext4}"
 OUTPUT_ROOTFS="${2:-assets/firecracker/hello-rootfs-air.ext4}"
 DEFAULT_PORT=10789
+DEFAULT_PROXY_LISTEN="127.0.0.1:18080"
+DEFAULT_PROXY_VSOCK_PORT=18080
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -82,7 +84,11 @@ if [ -b /dev/vdb ] && [ -b /dev/vdc ]; then
   mount -t overlay overlay -o lowerdir=/mnt/workspace-ro,upperdir=/mnt/workspace-rw/upper,workdir=/mnt/workspace-rw/work /workspace >>"\${LOG_FILE}" 2>&1 || true
 fi
 (
-  /usr/bin/air-agent --network vsock --port ${DEFAULT_PORT} >>"\${LOG_FILE}" 2>&1
+  export HTTP_PROXY=http://${DEFAULT_PROXY_LISTEN}
+  export HTTPS_PROXY=http://${DEFAULT_PROXY_LISTEN}
+  export ALL_PROXY=http://${DEFAULT_PROXY_LISTEN}
+  export NO_PROXY=127.0.0.1,localhost
+  /usr/bin/air-agent --network vsock --port ${DEFAULT_PORT} --host-proxy-listen ${DEFAULT_PROXY_LISTEN} --host-proxy-vsock-port ${DEFAULT_PROXY_VSOCK_PORT} >>"\${LOG_FILE}" 2>&1
   code=\$?
   echo "[air-agent] exited code=\${code}" >>"\${LOG_FILE}"
   echo "[air-agent] exited code=\${code}" >>/dev/console 2>&1 || true

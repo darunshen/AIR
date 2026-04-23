@@ -49,7 +49,8 @@ The top goal is a usable reference agent that can:
 - session-private writes now go into `workspace-upper.ext4`, so guest changes do not mutate the original host repo
 - the `/workspace` overlayfs flow has now been validated in a real Firecracker guest
 - `air session export-workspace <id> <output-dir>` now exports the current merged workspace result
-- Firecracker guest egress for provider APIs and real OpenClaude task validation still need to be added
+- Firecracker guests can now reach provider APIs through a host-side HTTP CONNECT relay, with prepared guest images injecting `HTTP_PROXY` / `HTTPS_PROXY`
+- real OpenClaude task validation still needs to be added
 
 ## P1: Debuggability And Runtime Stability
 

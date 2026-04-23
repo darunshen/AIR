@@ -371,6 +371,7 @@ Current status behavior:
 - when a Firecracker session has a workspace image, the guest mounts `/workspace` via overlayfs and guest commands default to `/workspace`
 - the `/workspace` overlayfs flow has been validated on a real Firecracker guest; host source files remain unchanged after guest writes
 - `air session export-workspace <id> <output-dir>` now exports the current merged workspace view from a running session
+- Firecracker sessions now start a host-side HTTP CONNECT egress relay; prepared guest images expose it as `HTTP_PROXY` / `HTTPS_PROXY` at `127.0.0.1:18080`
 - `scripts/prepare-openclaude-firecracker-rootfs.sh` prepares a Firecracker guest image with Bun and OpenClaude baked in at `/opt/openclaude`
 - `scripts/prepare-openclaude-alpine-rootfs.sh` prepares a newer Alpine-based guest image for Bun/OpenClaude; this is the recommended Firecracker path for OpenClaude workloads
 - `AIR_FIRECRACKER_BOOT_ARGS` can override the Firecracker kernel command line when a guest image needs a different init or boot setup

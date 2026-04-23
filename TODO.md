@@ -280,7 +280,8 @@
   - 已支持 session 私有 `workspace-upper.ext4` 写层，guest 修改不会污染 host 原 repo
   - `/workspace` overlayfs 已在真实 Firecracker guest 中验收通过
   - 已支持 `air session export-workspace <id> <output-dir>` 导出当前 merged workspace 结果
-  - 后续需要补 Firecracker guest 的 provider 出网能力，以及真实 OpenClaude 任务验收
+  - 已支持 Firecracker guest 通过 host-side HTTP CONNECT relay 访问 provider API，guest 内默认注入 `HTTP_PROXY` / `HTTPS_PROXY`
+  - 后续需要补真实 OpenClaude 任务验收
 
 ## P1: 调试与可观测性
 

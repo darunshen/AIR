@@ -270,12 +270,12 @@ Current status:
 - `AIR_FIRECRACKER_BOOT_ARGS` can now override the Firecracker kernel cmdline for guest-specific init requirements
 - AIR now supports a read-only `workspace.ext4` plus writable `workspace-upper.ext4` mounted as `/workspace` inside Firecracker guests
 - `air session export-workspace <id> <output-dir>` now exports the current merged workspace result
+- Firecracker guests can now reach provider APIs through a host-side HTTP CONNECT relay, with prepared guest images injecting `HTTP_PROXY` / `HTTPS_PROXY`
 
 Still needed:
 
 - service readiness checks, not just pid existence
 - normalized crash reasons
-- Firecracker guest egress for provider APIs
 - validation of a real OpenClaude task inside Firecracker guest sessions
 
 ### 6.2 Host <-> guest communication path
@@ -289,7 +289,11 @@ Options include:
 - a host-side proxy process
 - or a relay protocol through `air-agent`
 
-The best first direction is likely a host/guest relay built on top of the existing `air-agent` path, rather than exposing general guest networking.
+The current implementation uses a host/guest relay instead of exposing a general guest network device:
+
+- guest `127.0.0.1:18080` accepts normal HTTP proxy / HTTPS CONNECT traffic
+- guest `air-agent` forwards that TCP stream to host vsock
+- host AIR proxy connects to the external provider API
 
 ```mermaid
 flowchart LR

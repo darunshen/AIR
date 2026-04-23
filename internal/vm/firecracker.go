@@ -77,6 +77,8 @@ type firecrackerPaths struct {
 	workspacePath            string
 	workspaceUpperPath       string
 	pidPath                  string
+	egressProxyPIDPath       string
+	egressProxySocketPath    string
 	vsockPath                string
 	configDir                string
 	machineConfigPath        string
@@ -120,6 +122,7 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 
 	_ = os.Remove(paths.socketPath)
 	_ = os.Remove(paths.vsockPath)
+	_ = os.Remove(paths.egressProxySocketPath)
 	_ = os.Remove(paths.rootfsPath)
 	_ = os.Remove(paths.workspacePath)
 	_ = os.Remove(paths.workspaceUpperPath)
@@ -252,6 +255,14 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 		"vsock_path": paths.vsockPath,
 	})
 
+	if err := r.startEgressProxy(sessionID, paths); err != nil {
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "egress_proxy_failed", map[string]any{
+			"error": err.Error(),
+		})
+		_ = cmd.Process.Kill()
+		return "", err
+	}
+
 	return sessionID, nil
 }
 
@@ -351,6 +362,7 @@ func (r *firecrackerRuntime) Exec(sessionID, command string, timeout time.Durati
 func (r *firecrackerRuntime) Stop(vmid string) error {
 	paths := r.paths(vmid)
 	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", vmid, "session_stopping", nil)
+	_ = stopProcessFromPIDFile(paths.egressProxyPIDPath)
 
 	pidRaw, err := os.ReadFile(paths.pidPath)
 	if err != nil {
@@ -569,12 +581,79 @@ func (r *firecrackerRuntime) putJSON(client *http.Client, path string, payload a
 	return nil
 }
 
+func (r *firecrackerRuntime) startEgressProxy(sessionID string, paths firecrackerPaths) error {
+	hostPort := egressProxyPort(sessionID)
+	paths.egressProxySocketPath = hostVSockPortSocketPath(paths.vsockPath, hostPort)
+	_ = os.Remove(paths.egressProxySocketPath)
+
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(paths.consolePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+
+	cmd := exec.Command(self, "__firecracker-egress-proxy", paths.egressProxySocketPath)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.Dir = paths.base
+	setDetachedProcessGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if err := os.WriteFile(paths.egressProxyPIDPath, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
+		_ = cmd.Process.Kill()
+		return err
+	}
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "egress_proxy_started", map[string]any{
+		"pid":          cmd.Process.Pid,
+		"host_port":    hostPort,
+		"socket_path":  paths.egressProxySocketPath,
+		"guest_proxy":  fmt.Sprintf("http://127.0.0.1:%d", 18080),
+		"proxy_scheme": "http_connect",
+	})
+	go func() {
+		_ = cmd.Wait()
+	}()
+	return nil
+}
+
 func cidOffset(sessionID string) uint32 {
 	var total uint32
 	for _, ch := range []byte(sessionID) {
 		total += uint32(ch)
 	}
 	return total % 10000
+}
+
+func egressProxyPort(sessionID string) uint32 {
+	return 18080
+}
+
+func hostVSockPortSocketPath(vsockPath string, port uint32) string {
+	return fmt.Sprintf("%s_%d", vsockPath, port)
+}
+
+func stopProcessFromPIDFile(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	pid, err := strconv.Atoi(string(bytes.TrimSpace(raw)))
+	if err != nil {
+		return err
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Kill()
 }
 
 func processExists(pid int) bool {
@@ -594,6 +673,8 @@ func (r *firecrackerRuntime) paths(sessionID string) firecrackerPaths {
 		workspacePath:            filepath.Join(base, "workspace.ext4"),
 		workspaceUpperPath:       filepath.Join(base, "workspace-upper.ext4"),
 		pidPath:                  filepath.Join(base, "firecracker.pid"),
+		egressProxyPIDPath:       filepath.Join(base, "egress-proxy.pid"),
+		egressProxySocketPath:    hostVSockPortSocketPath(filepath.Join(base, "firecracker.vsock"), egressProxyPort(sessionID)),
 		vsockPath:                filepath.Join(base, "firecracker.vsock"),
 		configDir:                configDir,
 		machineConfigPath:        filepath.Join(configDir, "machine-config.json"),
