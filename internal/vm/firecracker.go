@@ -68,19 +68,23 @@ type firecrackerAction struct {
 }
 
 type firecrackerPaths struct {
-	base              string
-	socketPath        string
-	consolePath       string
-	metricsPath       string
-	eventsPath        string
-	overlayPath       string
-	pidPath           string
-	vsockPath         string
-	configDir         string
-	machineConfigPath string
-	bootSourcePath    string
-	rootfsConfigPath  string
-	vsockConfigPath   string
+	base                     string
+	socketPath               string
+	consolePath              string
+	metricsPath              string
+	eventsPath               string
+	rootfsPath               string
+	workspacePath            string
+	workspaceUpperPath       string
+	pidPath                  string
+	vsockPath                string
+	configDir                string
+	machineConfigPath        string
+	bootSourcePath           string
+	rootfsConfigPath         string
+	workspaceConfigPath      string
+	workspaceUpperConfigPath string
+	vsockConfigPath          string
 }
 
 func newFirecrackerRuntime(cfg Config) (Runtime, error) {
@@ -101,6 +105,10 @@ func newFirecrackerRuntime(cfg Config) (Runtime, error) {
 }
 
 func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
+	return r.StartWithOptions(sessionID, StartOptions{})
+}
+
+func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOptions) (string, error) {
 	if err := r.preflight(); err != nil {
 		return "", err
 	}
@@ -112,10 +120,20 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 
 	_ = os.Remove(paths.socketPath)
 	_ = os.Remove(paths.vsockPath)
-	_ = os.Remove(paths.overlayPath)
+	_ = os.Remove(paths.rootfsPath)
+	_ = os.Remove(paths.workspacePath)
+	_ = os.Remove(paths.workspaceUpperPath)
 
-	if err := copyFile(paths.overlayPath, r.rootfsImage); err != nil {
-		return "", fmt.Errorf("prepare firecracker session overlay: %w", err)
+	if err := copyFile(paths.rootfsPath, r.rootfsImage); err != nil {
+		return "", fmt.Errorf("prepare firecracker session rootfs: %w", err)
+	}
+	if opts.WorkspacePath != "" {
+		if err := buildWorkspaceImage(paths.workspacePath, opts.WorkspacePath); err != nil {
+			return "", fmt.Errorf("prepare firecracker workspace image: %w", err)
+		}
+		if err := createEmptyExt4(paths.workspaceUpperPath, defaultWorkspaceUpperSize, 65536); err != nil {
+			return "", fmt.Errorf("prepare firecracker workspace upper image: %w", err)
+		}
 	}
 
 	consoleFile, err := os.OpenFile(paths.consolePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -132,7 +150,8 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 	}
 	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "session_starting", map[string]any{
 		"base_rootfs_path": r.rootfsImage,
-		"overlay_path":     paths.overlayPath,
+		"rootfs_path":      paths.rootfsPath,
+		"workspace_path":   opts.WorkspacePath,
 		"kernel_path":      r.kernelImage,
 	})
 
@@ -196,6 +215,18 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 	if err := putJSONFn(client, "/drives/rootfs", payloads.rootfsDrive); err != nil {
 		_ = cmd.Process.Kill()
 		return "", fmt.Errorf("configure firecracker rootfs drive: %w", err)
+	}
+	if payloads.workspaceDrive != nil {
+		if err := putJSONFn(client, "/drives/workspace", payloads.workspaceDrive); err != nil {
+			_ = cmd.Process.Kill()
+			return "", fmt.Errorf("configure firecracker workspace drive: %w", err)
+		}
+	}
+	if payloads.workspaceUpperDrive != nil {
+		if err := putJSONFn(client, "/drives/workspace-upper", payloads.workspaceUpperDrive); err != nil {
+			_ = cmd.Process.Kill()
+			return "", fmt.Errorf("configure firecracker workspace upper drive: %w", err)
+		}
 	}
 
 	if err := putJSONFn(client, "/vsock", payloads.vsockConfig); err != nil {
@@ -371,7 +402,14 @@ func (r *firecrackerRuntime) Inspect(sessionID string) (*InspectInfo, error) {
 		MetricsPath: paths.metricsPath,
 		ConfigPath:  paths.configDir,
 		EventsPath:  paths.eventsPath,
-		OverlayPath: paths.overlayPath,
+		OverlayPath: paths.rootfsPath,
+		RootfsPath:  paths.rootfsPath,
+	}
+	if _, err := os.Stat(paths.workspacePath); err == nil {
+		info.WorkspaceImagePath = paths.workspacePath
+	}
+	if _, err := os.Stat(paths.workspaceUpperPath); err == nil {
+		info.WorkspaceUpperPath = paths.workspaceUpperPath
 	}
 
 	pidRaw, err := os.ReadFile(paths.pidPath)
@@ -547,31 +585,41 @@ func (r *firecrackerRuntime) paths(sessionID string) firecrackerPaths {
 	base := sessionRoot(r.root, sessionID)
 	configDir := filepath.Join(base, "config")
 	return firecrackerPaths{
-		base:              base,
-		socketPath:        filepath.Join(base, "firecracker.sock"),
-		consolePath:       filepath.Join(base, "console.log"),
-		metricsPath:       filepath.Join(base, "metrics.log"),
-		eventsPath:        filepath.Join(base, "events.jsonl"),
-		overlayPath:       filepath.Join(base, "overlay.ext4"),
-		pidPath:           filepath.Join(base, "firecracker.pid"),
-		vsockPath:         filepath.Join(base, "firecracker.vsock"),
-		configDir:         configDir,
-		machineConfigPath: filepath.Join(configDir, "machine-config.json"),
-		bootSourcePath:    filepath.Join(configDir, "boot-source.json"),
-		rootfsConfigPath:  filepath.Join(configDir, "rootfs-drive.json"),
-		vsockConfigPath:   filepath.Join(configDir, "vsock.json"),
+		base:                     base,
+		socketPath:               filepath.Join(base, "firecracker.sock"),
+		consolePath:              filepath.Join(base, "console.log"),
+		metricsPath:              filepath.Join(base, "metrics.log"),
+		eventsPath:               filepath.Join(base, "events.jsonl"),
+		rootfsPath:               filepath.Join(base, "rootfs.ext4"),
+		workspacePath:            filepath.Join(base, "workspace.ext4"),
+		workspaceUpperPath:       filepath.Join(base, "workspace-upper.ext4"),
+		pidPath:                  filepath.Join(base, "firecracker.pid"),
+		vsockPath:                filepath.Join(base, "firecracker.vsock"),
+		configDir:                configDir,
+		machineConfigPath:        filepath.Join(configDir, "machine-config.json"),
+		bootSourcePath:           filepath.Join(configDir, "boot-source.json"),
+		rootfsConfigPath:         filepath.Join(configDir, "rootfs-drive.json"),
+		workspaceConfigPath:      filepath.Join(configDir, "workspace-drive.json"),
+		workspaceUpperConfigPath: filepath.Join(configDir, "workspace-upper-drive.json"),
+		vsockConfigPath:          filepath.Join(configDir, "vsock.json"),
 	}
 }
 
 type firecrackerPayloads struct {
-	machineConfig firecrackerMachineConfig
-	bootSource    firecrackerBootSource
-	rootfsDrive   firecrackerDrive
-	vsockConfig   firecrackerVsock
+	machineConfig       firecrackerMachineConfig
+	bootSource          firecrackerBootSource
+	rootfsDrive         firecrackerDrive
+	workspaceDrive      *firecrackerDrive
+	workspaceUpperDrive *firecrackerDrive
+	vsockConfig         firecrackerVsock
 }
 
 func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) firecrackerPayloads {
-	return firecrackerPayloads{
+	rootfsReadOnly := false
+	if _, err := os.Stat(paths.workspacePath); err == nil {
+		rootfsReadOnly = true
+	}
+	payloads := firecrackerPayloads{
 		machineConfig: firecrackerMachineConfig{
 			VCPUCount:  r.vcpuCount,
 			MemSizeMiB: r.memoryMiB,
@@ -583,9 +631,9 @@ func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) 
 		},
 		rootfsDrive: firecrackerDrive{
 			DriveID:      "rootfs",
-			PathOnHost:   paths.overlayPath,
+			PathOnHost:   paths.rootfsPath,
 			IsRootDevice: true,
-			IsReadOnly:   false,
+			IsReadOnly:   rootfsReadOnly,
 		},
 		vsockConfig: firecrackerVsock{
 			VsockID:  "root",
@@ -593,15 +641,39 @@ func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) 
 			UdsPath:  paths.vsockPath,
 		},
 	}
+	if _, err := os.Stat(paths.workspacePath); err == nil {
+		payloads.workspaceDrive = &firecrackerDrive{
+			DriveID:      "workspace",
+			PathOnHost:   paths.workspacePath,
+			IsRootDevice: false,
+			IsReadOnly:   true,
+		}
+	}
+	if _, err := os.Stat(paths.workspaceUpperPath); err == nil {
+		payloads.workspaceUpperDrive = &firecrackerDrive{
+			DriveID:      "workspace-upper",
+			PathOnHost:   paths.workspaceUpperPath,
+			IsRootDevice: false,
+			IsReadOnly:   false,
+		}
+	}
+	return payloads
 }
 
 func (r *firecrackerRuntime) writeConfigSnapshot(paths firecrackerPaths, payloads firecrackerPayloads) error {
-	for filePath, payload := range map[string]any{
+	items := map[string]any{
 		paths.machineConfigPath: payloads.machineConfig,
 		paths.bootSourcePath:    payloads.bootSource,
 		paths.rootfsConfigPath:  payloads.rootfsDrive,
 		paths.vsockConfigPath:   payloads.vsockConfig,
-	} {
+	}
+	if payloads.workspaceDrive != nil {
+		items[paths.workspaceConfigPath] = payloads.workspaceDrive
+	}
+	if payloads.workspaceUpperDrive != nil {
+		items[paths.workspaceUpperConfigPath] = payloads.workspaceUpperDrive
+	}
+	for filePath, payload := range items {
 		if err := writeJSONFile(filePath, payload); err != nil {
 			return err
 		}

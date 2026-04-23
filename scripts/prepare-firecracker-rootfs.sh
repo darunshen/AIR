@@ -72,9 +72,15 @@ CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH:-$(go env GOARCH)}" \
 
 cat >"${tmpdir}/air-agent.start" <<EOF
 #!/bin/sh
-LOG_FILE=/air-agent.log
+LOG_FILE=/tmp/air-agent.log
 echo "[air-agent] boot hook start" >>"\${LOG_FILE}"
 echo "[air-agent] boot hook start" >>/dev/console 2>&1 || true
+if [ -b /dev/vdb ] && [ -b /dev/vdc ]; then
+  mount -o ro /dev/vdb /mnt/workspace-ro >>"\${LOG_FILE}" 2>&1 || true
+  mount /dev/vdc /mnt/workspace-rw >>"\${LOG_FILE}" 2>&1 || true
+  mkdir -p /mnt/workspace-rw/upper /mnt/workspace-rw/work
+  mount -t overlay overlay -o lowerdir=/mnt/workspace-ro,upperdir=/mnt/workspace-rw/upper,workdir=/mnt/workspace-rw/work /workspace >>"\${LOG_FILE}" 2>&1 || true
+fi
 /usr/bin/air-agent --network vsock --port ${DEFAULT_PORT} >>"\${LOG_FILE}" 2>&1 &
 echo "[air-agent] launched pid=\$!" >>"\${LOG_FILE}"
 echo "[air-agent] launched" >>/dev/console 2>&1 || true
@@ -86,6 +92,7 @@ echo "Extracting source rootfs..."
 debugfs -R "rdump / ${tmpdir}/rootfs" "${SOURCE_ROOTFS}" >/dev/null 2>&1
 
 echo "Injecting air-agent into staging rootfs..."
+mkdir -p "${tmpdir}/rootfs/mnt/workspace-ro" "${tmpdir}/rootfs/mnt/workspace-rw" "${tmpdir}/rootfs/workspace"
 install -D -m 0755 "${tmpdir}/air-agent" "${tmpdir}/rootfs/usr/bin/air-agent"
 install -D -m 0755 "${tmpdir}/air-agent.start" "${tmpdir}/rootfs/etc/local.d/air-agent.start"
 rm -f "${tmpdir}/rootfs/etc/runlevels/default/local"

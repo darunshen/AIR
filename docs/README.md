@@ -20,6 +20,7 @@
 - [数据模型](data-model.md) | [English](data-model.en.md)
 - [虚拟化选型](virtualization-selection.md) | [English](virtualization-selection.en.md)
 - [VM Runtime 设计](vm-runtime-design.md) | [English](vm-runtime-design.en.md)
+- [根文件系统管理架构](rootfs-management-architecture.md) | [English](rootfs-management-architecture.en.md)
 - [AI Agent 选型](agent-selection.md) | [English](agent-selection.en.md)
 - [AI Agent 使用说明](ai-agent-usage.md) | [English](ai-agent-usage.en.md)
 - [Firecracker 真机部署指南](firecracker-deployment-guide.md) | [English](firecracker-deployment-guide.en.md)

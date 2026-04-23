@@ -78,10 +78,11 @@ func main() {
 			exitErr(err)
 		}
 		result, runErr := manager.Run(command, session.RunOptions{
-			Provider:  opts.Provider,
-			Timeout:   opts.Timeout,
-			MemoryMiB: opts.MemoryMiB,
-			VCPUCount: opts.VCPUCount,
+			Provider:      opts.Provider,
+			Timeout:       opts.Timeout,
+			MemoryMiB:     opts.MemoryMiB,
+			VCPUCount:     opts.VCPUCount,
+			WorkspacePath: opts.WorkspacePath,
 		})
 		if opts.Human {
 			printRunHuman(result)
@@ -99,11 +100,14 @@ func main() {
 		}
 		switch args[1] {
 		case "create":
-			provider, err := parseProviderFlag(args[2:])
+			opts, err := parseSessionCreateFlags(args[2:])
 			if err != nil {
 				exitErr(err)
 			}
-			s, err := manager.CreateWithProvider(provider)
+			s, err := manager.CreateWithOptions(session.CreateOptions{
+				Provider:      opts.Provider,
+				WorkspacePath: opts.WorkspacePath,
+			})
 			if err != nil {
 				exitErr(err)
 			}
@@ -279,15 +283,15 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air version")
 	fmt.Fprintln(os.Stderr, "  air init firecracker [--source official|custom] [--dir PATH] [--yes]")
 	fmt.Fprintln(os.Stderr, "  air doctor [--provider local|firecracker] [--human]")
-	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--human] -- <command>")
-	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker]")
+	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--workspace PATH] [--human] -- <command>")
+	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker] [--workspace PATH]")
 	fmt.Fprintln(os.Stderr, "  air session list")
 	fmt.Fprintln(os.Stderr, "  air session inspect <id>")
 	fmt.Fprintln(os.Stderr, "  air session console <id> [--follow] [--tail=N]")
 	fmt.Fprintln(os.Stderr, "  air session events <id> [--follow] [--tail=N]")
 	fmt.Fprintln(os.Stderr, "  air session exec <id> \"<command>\"")
 	fmt.Fprintln(os.Stderr, "  air session delete <id>")
-	fmt.Fprintln(os.Stderr, "  air agent openclaude start [--session ID] [--provider local|firecracker] [--repo PATH] [--guest-repo PATH] [--host HOST] [--port 50051] [--command \"bun run scripts/start-grpc.ts\"]")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude start [--session ID] [--provider local|firecracker] [--repo PATH] [--guest-repo PATH] [--workspace PATH] [--host HOST] [--port 50051] [--command \"bun run scripts/start-grpc.ts\"]")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude status <session-id>")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude stop <session-id>")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude forward <session-id> [--listen 127.0.0.1:50052]")
@@ -655,25 +659,52 @@ func copyTailLines(path string, lines int, dst io.Writer) (int64, error) {
 	return int64(len(body)), nil
 }
 
-func parseProviderFlag(args []string) (string, error) {
-	if len(args) == 0 {
-		return "", nil
+type sessionCreateCLIOptions struct {
+	Provider      string
+	WorkspacePath string
+}
+
+func parseSessionCreateFlags(args []string) (sessionCreateCLIOptions, error) {
+	var opts sessionCreateCLIOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--provider":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return sessionCreateCLIOptions{}, errors.New("provider must not be empty")
+			}
+			opts.Provider = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--provider="):
+			opts.Provider = strings.TrimPrefix(arg, "--provider=")
+			if opts.Provider == "" {
+				return sessionCreateCLIOptions{}, errors.New("provider must not be empty")
+			}
+		case arg == "--workspace":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return sessionCreateCLIOptions{}, errors.New("workspace must not be empty")
+			}
+			opts.WorkspacePath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--workspace="):
+			opts.WorkspacePath = strings.TrimPrefix(arg, "--workspace=")
+			if opts.WorkspacePath == "" {
+				return sessionCreateCLIOptions{}, errors.New("workspace must not be empty")
+			}
+		default:
+			return sessionCreateCLIOptions{}, fmt.Errorf("unknown session create flag: %s", arg)
+		}
 	}
-	if len(args) != 2 || args[0] != "--provider" {
-		return "", errors.New("usage: air session create [--provider local|firecracker]")
-	}
-	if args[1] == "" {
-		return "", errors.New("provider must not be empty")
-	}
-	return args[1], nil
+	return opts, nil
 }
 
 type runCLIOptions struct {
-	Provider  string
-	Timeout   time.Duration
-	MemoryMiB int
-	VCPUCount int
-	Human     bool
+	Provider      string
+	Timeout       time.Duration
+	MemoryMiB     int
+	VCPUCount     int
+	WorkspacePath string
+	Human         bool
 }
 
 type openClaudeForwardCLIOptions struct {
@@ -729,6 +760,17 @@ func parseOpenClaudeStartFlags(args []string) (session.OpenClaudeStartOptions, e
 			opts.GuestRepoPath = strings.TrimPrefix(arg, "--guest-repo=")
 			if opts.GuestRepoPath == "" {
 				return session.OpenClaudeStartOptions{}, errors.New("guest-repo must not be empty")
+			}
+		case arg == "--workspace":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("workspace must not be empty")
+			}
+			opts.WorkspacePath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--workspace="):
+			opts.WorkspacePath = strings.TrimPrefix(arg, "--workspace=")
+			if opts.WorkspacePath == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("workspace must not be empty")
 			}
 		case arg == "--command":
 			if i+1 >= len(args) || args[i+1] == "" {
@@ -881,6 +923,17 @@ func parseRunFlags(args []string) (runCLIOptions, string, error) {
 				return runCLIOptions{}, "", errors.New("vcpu-count must be a positive integer")
 			}
 			opts.VCPUCount = value
+		case arg == "--workspace":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return runCLIOptions{}, "", errors.New("workspace must not be empty")
+			}
+			opts.WorkspacePath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--workspace="):
+			opts.WorkspacePath = strings.TrimPrefix(arg, "--workspace=")
+			if opts.WorkspacePath == "" {
+				return runCLIOptions{}, "", errors.New("workspace must not be empty")
+			}
 		default:
 			commandArgs = append(commandArgs, args[i:]...)
 			i = len(args)
@@ -889,7 +942,7 @@ func parseRunFlags(args []string) (runCLIOptions, string, error) {
 
 	command := strings.TrimSpace(strings.Join(commandArgs, " "))
 	if command == "" {
-		return runCLIOptions{}, "", errors.New("usage: air run [--provider local|firecracker] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--human] -- <command>")
+		return runCLIOptions{}, "", errors.New("usage: air run [--provider local|firecracker] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--workspace PATH] [--human] -- <command>")
 	}
 	if opts.Timeout <= 0 {
 		return runCLIOptions{}, "", errors.New("timeout must be greater than 0")

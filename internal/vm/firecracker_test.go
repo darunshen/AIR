@@ -118,7 +118,7 @@ while true; do sleep 1; done
 
 	base := filepath.Join(root, "runtime", "firecracker", "sess_firecracker")
 	for _, path := range []string{
-		filepath.Join(base, "overlay.ext4"),
+		filepath.Join(base, "rootfs.ext4"),
 		filepath.Join(base, "firecracker.sock"),
 		filepath.Join(base, "firecracker.pid"),
 		filepath.Join(base, "console.log"),
@@ -147,7 +147,7 @@ while true; do sleep 1; done
 	if info.ConsolePath == "" || info.SocketPath == "" || info.PIDPath == "" || info.ConfigPath == "" {
 		t.Fatalf("expected populated firecracker inspect info, got %+v", info)
 	}
-	if info.OverlayPath != filepath.Join(base, "overlay.ext4") {
+	if info.OverlayPath != filepath.Join(base, "rootfs.ext4") {
 		t.Fatalf("unexpected overlay path: %s", info.OverlayPath)
 	}
 	if info.EventsPath != filepath.Join(base, "events.jsonl") {
@@ -158,7 +158,7 @@ while true; do sleep 1; done
 	if err != nil {
 		t.Fatalf("read rootfs config: %v", err)
 	}
-	if !strings.Contains(string(rootfsConfigBody), filepath.Join(base, "overlay.ext4")) {
+	if !strings.Contains(string(rootfsConfigBody), filepath.Join(base, "rootfs.ext4")) {
 		t.Fatalf("expected rootfs config to point to overlay, got %s", string(rootfsConfigBody))
 	}
 
@@ -691,16 +691,16 @@ func TestFirecrackerIntegrationLifecycle(t *testing.T) {
 	}()
 
 	paths := rt.paths(vmid)
-	for _, path := range []string{paths.pidPath, paths.socketPath, paths.consolePath, paths.metricsPath, paths.eventsPath, paths.overlayPath} {
+	for _, path := range []string{paths.pidPath, paths.socketPath, paths.consolePath, paths.metricsPath, paths.eventsPath, paths.rootfsPath} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected artifact %s: %v", path, err)
 		}
 	}
-	if paths.overlayPath == rootfs {
-		t.Fatalf("expected session overlay path, got shared rootfs path %s", paths.overlayPath)
+	if paths.rootfsPath == rootfs {
+		t.Fatalf("expected session rootfs path, got shared rootfs path %s", paths.rootfsPath)
 	}
 
-	first, err := rt.Exec(vmid, "echo integration > /root/air-session.txt", 10*time.Second)
+	first, err := rt.Exec(vmid, "echo integration > /tmp/air-session.txt", 10*time.Second)
 	if err != nil {
 		t.Fatalf("exec write integration file: %v", err)
 	}

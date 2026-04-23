@@ -23,10 +23,11 @@ type ExecResult struct {
 }
 
 type RunOptions struct {
-	Provider  string
-	Timeout   time.Duration
-	MemoryMiB int
-	VCPUCount int
+	Provider      string
+	Timeout       time.Duration
+	MemoryMiB     int
+	VCPUCount     int
+	WorkspacePath string
 }
 
 type RunResult struct {
@@ -43,9 +44,10 @@ type RunResult struct {
 }
 
 type CreateOptions struct {
-	Provider  string
-	MemoryMiB int
-	VCPUCount int
+	Provider      string
+	MemoryMiB     int
+	VCPUCount     int
+	WorkspacePath string
 }
 
 type Manager struct {
@@ -100,19 +102,22 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (*model.Session, error) 
 		return nil, err
 	}
 
-	vmid, err := runtime.Start(id)
+	vmid, err := runtime.StartWithOptions(id, vm.StartOptions{
+		WorkspacePath: opts.WorkspacePath,
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	now := time.Now().UTC()
 	s := &model.Session{
-		ID:         id,
-		VMID:       vmid,
-		Provider:   resolvedProvider,
-		Status:     "running",
-		CreatedAt:  now,
-		LastUsedAt: now,
+		ID:            id,
+		VMID:          vmid,
+		Provider:      resolvedProvider,
+		Status:        "running",
+		WorkspacePath: opts.WorkspacePath,
+		CreatedAt:     now,
+		LastUsedAt:    now,
 	}
 
 	if err := m.store.Save(s); err != nil {
@@ -189,9 +194,10 @@ func (m *Manager) Run(command string, opts RunOptions) (*RunResult, error) {
 	}
 
 	s, err := m.CreateWithOptions(CreateOptions{
-		Provider:  opts.Provider,
-		MemoryMiB: opts.MemoryMiB,
-		VCPUCount: opts.VCPUCount,
+		Provider:      opts.Provider,
+		MemoryMiB:     opts.MemoryMiB,
+		VCPUCount:     opts.VCPUCount,
+		WorkspacePath: opts.WorkspacePath,
 	})
 	if err != nil {
 		result.ErrorType = classifyRunErrorType("create", err)
@@ -462,6 +468,15 @@ func validateRunOptions(opts RunOptions) error {
 	}
 	if opts.VCPUCount < 0 {
 		return errors.New("vcpu-count must be greater than 0")
+	}
+	if opts.WorkspacePath != "" {
+		info, err := os.Stat(opts.WorkspacePath)
+		if err != nil {
+			return fmt.Errorf("workspace is unavailable: %w", err)
+		}
+		if !info.IsDir() {
+			return errors.New("workspace must be a directory")
+		}
 	}
 	return nil
 }

@@ -21,6 +21,10 @@ func newLocalRuntime(cfg Config) (Runtime, error) {
 }
 
 func (r *localRuntime) Start(sessionID string) (string, error) {
+	return r.StartWithOptions(sessionID, StartOptions{})
+}
+
+func (r *localRuntime) StartWithOptions(sessionID string, opts StartOptions) (string, error) {
 	base := sessionRoot(r.root, sessionID)
 	workspace := filepath.Join(base, "workspace")
 	taskDir := filepath.Join(base, "task")
@@ -31,9 +35,15 @@ func (r *localRuntime) Start(sessionID string) (string, error) {
 			return "", err
 		}
 	}
+	if opts.WorkspacePath != "" {
+		if err := copyDir(workspace, opts.WorkspacePath, defaultWorkspaceExcludes()); err != nil {
+			return "", fmt.Errorf("prepare local workspace: %w", err)
+		}
+	}
 	_ = appendRuntimeEvent(eventsPath, "local", sessionID, "session_started", map[string]any{
-		"workspace_path": workspace,
-		"task_path":      taskDir,
+		"workspace_path":        workspace,
+		"task_path":             taskDir,
+		"source_workspace_path": opts.WorkspacePath,
 	})
 
 	return sessionID, nil

@@ -30,6 +30,7 @@ type OpenClaudeStartOptions struct {
 	Provider      string
 	RepoPath      string
 	GuestRepoPath string
+	WorkspacePath string
 	Command       string
 	Host          string
 	Port          int
@@ -82,7 +83,10 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 	sessionID := opts.SessionID
 	createdSession := false
 	if sessionID == "" {
-		s, err := m.CreateWithProvider(opts.Provider)
+		s, err := m.CreateWithOptions(CreateOptions{
+			Provider:      opts.Provider,
+			WorkspacePath: opts.WorkspacePath,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -127,7 +131,7 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 		Command:   opts.Command,
 		Host:      opts.Host,
 		Port:      opts.Port,
-		StateDir:  openClaudeStateDir(repoPath, sessionID),
+		StateDir:  openClaudeStateDirForProvider(inspect.Session.Provider, repoPath, sessionID),
 		StartedAt: time.Now().UTC(),
 	}
 	meta.PIDPath = path.Join(meta.StateDir, "server.pid")
@@ -368,6 +372,13 @@ func resolveOpenClaudeRepoPath(provider string, opts OpenClaudeStartOptions) str
 		}
 	}
 	return opts.RepoPath
+}
+
+func openClaudeStateDirForProvider(provider, repoPath, sessionID string) string {
+	if provider == "firecracker" {
+		return path.Join("/run/air/openclaude", sessionID)
+	}
+	return openClaudeStateDir(repoPath, sessionID)
 }
 
 func openClaudeStatusFromMetadata(inspect *InspectResult, meta *openClaudeMetadata) *OpenClaudeStatus {

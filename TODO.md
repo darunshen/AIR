@@ -275,7 +275,9 @@
   - 已新增 `scripts/prepare-openclaude-firecracker-rootfs.sh`，可把 Bun + OpenClaude 注入 Firecracker guest rootfs
   - 已新增 `scripts/prepare-openclaude-alpine-rootfs.sh`，用于基于新版 Alpine minirootfs 构建 Bun/OpenClaude 可运行的 Firecracker guest rootfs
   - 官方 demo rootfs 仍可用于 AIR 基础链路验证，但用户态过旧，不再作为 OpenClaude guest 的推荐基线
-  - 后续需要补 Firecracker guest 的 provider 出网能力、workspace 注入与结果回传
+  - 已支持 `air session create --provider firecracker --workspace ...`，host repo 会构建为只读 `workspace.ext4`，并在 guest 内通过 overlayfs 暴露为 `/workspace`
+  - 已支持 session 私有 `workspace-upper.ext4` 写层，guest 修改不会污染 host 原 repo
+  - 后续需要补 Firecracker guest 的 provider 出网能力与 workspace 结果导出
 
 ## P1: 调试与可观测性
 

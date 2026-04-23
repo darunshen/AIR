@@ -175,11 +175,21 @@ mkdir -p /proc /sys /dev /run /tmp /var/log
 mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
-echo "[air-agent] boot hook start" >>/air-agent.log
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+mount -t tmpfs tmpfs /var/log 2>/dev/null || true
+LOG_FILE=/tmp/air-agent.log
+echo "[air-agent] boot hook start" >>"\${LOG_FILE}"
 echo "[air-agent] boot hook start" >>/dev/console 2>&1 || true
-/usr/bin/air-agent --network vsock --port ${DEFAULT_PORT} >>/air-agent.log 2>&1 &
+if [ -b /dev/vdb ] && [ -b /dev/vdc ]; then
+  mount -o ro /dev/vdb /mnt/workspace-ro >>"\${LOG_FILE}" 2>&1 || true
+  mount /dev/vdc /mnt/workspace-rw >>"\${LOG_FILE}" 2>&1 || true
+  mkdir -p /mnt/workspace-rw/upper /mnt/workspace-rw/work
+  mount -t overlay overlay -o lowerdir=/mnt/workspace-ro,upperdir=/mnt/workspace-rw/upper,workdir=/mnt/workspace-rw/work /workspace >>"\${LOG_FILE}" 2>&1 || true
+fi
+/usr/bin/air-agent --network vsock --port ${DEFAULT_PORT} >>"\${LOG_FILE}" 2>&1 &
 echo \$! >/run/air-agent.pid
-echo "[air-agent] launched pid=\$(cat /run/air-agent.pid)" >>/air-agent.log
+echo "[air-agent] launched pid=\$(cat /run/air-agent.pid)" >>"\${LOG_FILE}"
 echo "[air-agent] launched" >>/dev/console 2>&1 || true
 EOF
 chmod 0755 "${tmpdir}/air-init"
@@ -203,7 +213,7 @@ echo "Extracting Alpine minirootfs..."
 tar -xzf "${ALPINE_MINIROOTFS}" -C "${stage_root}"
 
 echo "Injecting AIR guest agent and OpenClaude runtime..."
-mkdir -p "${stage_root}/opt" "${stage_root}/usr/local/bin" "${stage_root}/var/log" "${stage_root}/run"
+mkdir -p "${stage_root}/opt" "${stage_root}/usr/local/bin" "${stage_root}/var/log" "${stage_root}/run" "${stage_root}/mnt/workspace-ro" "${stage_root}/mnt/workspace-rw" "${stage_root}/workspace"
 cp -a "${OPENCLAUDE_REPO}" "${stage_root}/opt/openclaude"
 rm -rf "${stage_root}/opt/openclaude/.git" "${stage_root}/opt/openclaude/.air"
 find "${stage_root}/opt/openclaude" -name '.DS_Store' -delete

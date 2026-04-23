@@ -195,6 +195,7 @@ In this layout:
 - the guest also exposes `/usr/local/bin/openclaude-grpc`
 - the guest starts `air-agent` through `/etc/inittab` on boot
 - on the `firecracker` provider, AIR falls back to `/opt/openclaude` when `--guest-repo` is not explicitly provided
+- `air session create --provider firecracker --workspace /path/to/repo` now attaches a read-only `workspace.ext4` and a writable `workspace-upper.ext4`, then mounts them as `/workspace` inside the guest
 - if you must keep an existing ext4 guest baseline, `scripts/prepare-openclaude-firecracker-rootfs.sh` still exists, but it only works when the guest userspace is already Bun-compatible
 
 ### Phase C: Productized bridge
@@ -267,13 +268,14 @@ Current status:
 - deleting a session now attempts to clean up the managed process first
 - `air agent openclaude forward` can now expose the session's OpenClaude TCP endpoint on the host
 - `AIR_FIRECRACKER_BOOT_ARGS` can now override the Firecracker kernel cmdline for guest-specific init requirements
+- AIR now supports a read-only `workspace.ext4` plus writable `workspace-upper.ext4` mounted as `/workspace` inside Firecracker guests
 
 Still needed:
 
 - service readiness checks, not just pid existence
 - normalized crash reasons
 - Firecracker guest egress for provider APIs
-- validation with a real OpenClaude process inside Firecracker guest sessions
+- validation with a real OpenClaude process inside Firecracker guest sessions and workspace result export
 
 ### 6.2 Host <-> guest communication path
 

@@ -20,6 +20,7 @@ Rules:
 - [Data Model](data-model.en.md) | [中文](data-model.md)
 - [Virtualization Selection](virtualization-selection.en.md) | [中文](virtualization-selection.md)
 - [VM Runtime Design](vm-runtime-design.en.md) | [中文](vm-runtime-design.md)
+- [Rootfs Management Architecture](rootfs-management-architecture.en.md) | [中文](rootfs-management-architecture.md)
 - [AI Agent Selection](agent-selection.en.md) | [中文](agent-selection.md)
 - [Using AIR From AI Agents](ai-agent-usage.en.md) | [中文](ai-agent-usage.md)
 - [Firecracker Deployment Guide](firecracker-deployment-guide.en.md) | [中文](firecracker-deployment-guide.md)

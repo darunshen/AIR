@@ -45,7 +45,9 @@ The top goal is a usable reference agent that can:
 - `scripts/prepare-openclaude-firecracker-rootfs.sh` now bakes Bun + OpenClaude into a Firecracker guest rootfs
 - `scripts/prepare-openclaude-alpine-rootfs.sh` now provides a newer Alpine-based Bun/OpenClaude guest rootfs path
 - the official demo rootfs remains useful for AIR base validation, but it is no longer the recommended OpenClaude guest baseline
-- Firecracker guest egress for provider APIs, workspace injection, and result export still need to be added
+- `air session create --provider firecracker --workspace ...` now builds a read-only `workspace.ext4` and exposes `/workspace` inside the guest through overlayfs
+- session-private writes now go into `workspace-upper.ext4`, so guest changes do not mutate the original host repo
+- Firecracker guest egress for provider APIs and workspace result export still need to be added
 
 ## P1: Debuggability And Runtime Stability
 

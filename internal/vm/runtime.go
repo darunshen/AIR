@@ -9,6 +9,7 @@ import (
 
 type Runtime interface {
 	Start(sessionID string) (string, error)
+	StartWithOptions(sessionID string, opts StartOptions) (string, error)
 	Exec(sessionID, command string, timeout time.Duration) (*ExecResult, error)
 	Stop(vmid string) error
 	Inspect(sessionID string) (*InspectInfo, error)
@@ -16,6 +17,10 @@ type Runtime interface {
 
 type TCPDialer interface {
 	DialTCP(sessionID, address string, timeout time.Duration) (net.Conn, error)
+}
+
+type StartOptions struct {
+	WorkspacePath string
 }
 
 type ExecResult struct {
@@ -28,22 +33,25 @@ type ExecResult struct {
 }
 
 type InspectInfo struct {
-	Provider      string `json:"provider"`
-	SessionID     string `json:"session_id"`
-	RootPath      string `json:"root_path"`
-	Exists        bool   `json:"exists"`
-	Running       bool   `json:"running"`
-	ConsolePath   string `json:"console_path,omitempty"`
-	WorkspacePath string `json:"workspace_path,omitempty"`
-	TaskPath      string `json:"task_path,omitempty"`
-	SocketPath    string `json:"socket_path,omitempty"`
-	PIDPath       string `json:"pid_path,omitempty"`
-	PID           int    `json:"pid,omitempty"`
-	VSockPath     string `json:"vsock_path,omitempty"`
-	MetricsPath   string `json:"metrics_path,omitempty"`
-	ConfigPath    string `json:"config_path,omitempty"`
-	EventsPath    string `json:"events_path,omitempty"`
-	OverlayPath   string `json:"overlay_path,omitempty"`
+	Provider           string `json:"provider"`
+	SessionID          string `json:"session_id"`
+	RootPath           string `json:"root_path"`
+	Exists             bool   `json:"exists"`
+	Running            bool   `json:"running"`
+	ConsolePath        string `json:"console_path,omitempty"`
+	WorkspacePath      string `json:"workspace_path,omitempty"`
+	TaskPath           string `json:"task_path,omitempty"`
+	SocketPath         string `json:"socket_path,omitempty"`
+	PIDPath            string `json:"pid_path,omitempty"`
+	PID                int    `json:"pid,omitempty"`
+	VSockPath          string `json:"vsock_path,omitempty"`
+	MetricsPath        string `json:"metrics_path,omitempty"`
+	ConfigPath         string `json:"config_path,omitempty"`
+	EventsPath         string `json:"events_path,omitempty"`
+	OverlayPath        string `json:"overlay_path,omitempty"`
+	RootfsPath         string `json:"rootfs_path,omitempty"`
+	WorkspaceImagePath string `json:"workspace_image_path,omitempty"`
+	WorkspaceUpperPath string `json:"workspace_upper_path,omitempty"`
 }
 
 type Config struct {

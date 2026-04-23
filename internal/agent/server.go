@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"time"
 
@@ -193,6 +194,9 @@ func (s *Server) handleProxyStream(rw io.ReadWriter, encoder *json.Encoder, req 
 
 func defaultExec(ctx context.Context, command string) (*guestapi.ExecResult, error) {
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	if info, err := os.Stat("/workspace"); err == nil && info.IsDir() {
+		cmd.Dir = "/workspace"
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
