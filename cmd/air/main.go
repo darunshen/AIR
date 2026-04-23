@@ -211,6 +211,16 @@ func main() {
 			if err := streamFile(path, follow, tailLines); err != nil {
 				exitErr(err)
 			}
+		case "export-workspace":
+			opts, err := parseSessionExportWorkspaceFlags(args[2:])
+			if err != nil {
+				exitErr(err)
+			}
+			result, err := manager.ExportWorkspace(opts.SessionID, opts.OutputPath, opts.Force)
+			if err != nil {
+				exitErr(err)
+			}
+			printJSON(result)
 		default:
 			usage()
 			os.Exit(1)
@@ -290,6 +300,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air session console <id> [--follow] [--tail=N]")
 	fmt.Fprintln(os.Stderr, "  air session events <id> [--follow] [--tail=N]")
 	fmt.Fprintln(os.Stderr, "  air session exec <id> \"<command>\"")
+	fmt.Fprintln(os.Stderr, "  air session export-workspace <id> <output-dir> [--force]")
 	fmt.Fprintln(os.Stderr, "  air session delete <id>")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude start [--session ID] [--provider local|firecracker] [--repo PATH] [--guest-repo PATH] [--workspace PATH] [--host HOST] [--port 50051] [--command \"bun run scripts/start-grpc.ts\"]")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude status <session-id>")
@@ -331,6 +342,12 @@ func printJSON(v any) {
 type doctorCLIOptions struct {
 	Provider string
 	Human    bool
+}
+
+type sessionExportWorkspaceCLIOptions struct {
+	SessionID  string
+	OutputPath string
+	Force      bool
 }
 
 type initFirecrackerCLIOptions struct {
@@ -396,6 +413,28 @@ func parseInitFirecrackerFlags(args []string) (initFirecrackerCLIOptions, error)
 	default:
 		return initFirecrackerCLIOptions{}, fmt.Errorf("unsupported source: %s", opts.Source)
 	}
+	return opts, nil
+}
+
+func parseSessionExportWorkspaceFlags(args []string) (sessionExportWorkspaceCLIOptions, error) {
+	var opts sessionExportWorkspaceCLIOptions
+	positionals := make([]string, 0, 2)
+	for _, arg := range args {
+		switch arg {
+		case "--force":
+			opts.Force = true
+		default:
+			if strings.HasPrefix(arg, "--") {
+				return sessionExportWorkspaceCLIOptions{}, fmt.Errorf("unknown export-workspace flag: %s", arg)
+			}
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) != 2 {
+		return sessionExportWorkspaceCLIOptions{}, errors.New("usage: air session export-workspace <id> <output-dir> [--force]")
+	}
+	opts.SessionID = positionals[0]
+	opts.OutputPath = positionals[1]
 	return opts, nil
 }
 

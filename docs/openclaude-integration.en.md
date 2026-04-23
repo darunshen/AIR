@@ -269,13 +269,14 @@ Current status:
 - `air agent openclaude forward` can now expose the session's OpenClaude TCP endpoint on the host
 - `AIR_FIRECRACKER_BOOT_ARGS` can now override the Firecracker kernel cmdline for guest-specific init requirements
 - AIR now supports a read-only `workspace.ext4` plus writable `workspace-upper.ext4` mounted as `/workspace` inside Firecracker guests
+- `air session export-workspace <id> <output-dir>` now exports the current merged workspace result
 
 Still needed:
 
 - service readiness checks, not just pid existence
 - normalized crash reasons
 - Firecracker guest egress for provider APIs
-- validation of a real OpenClaude task inside Firecracker guest sessions and workspace result export
+- validation of a real OpenClaude task inside Firecracker guest sessions
 
 ### 6.2 Host <-> guest communication path
 

@@ -279,7 +279,8 @@
   - 已支持 `air session create --provider firecracker --workspace ...`，host repo 会构建为只读 `workspace.ext4`，并在 guest 内通过 overlayfs 暴露为 `/workspace`
   - 已支持 session 私有 `workspace-upper.ext4` 写层，guest 修改不会污染 host 原 repo
   - `/workspace` overlayfs 已在真实 Firecracker guest 中验收通过
-  - 后续需要补 Firecracker guest 的 provider 出网能力、workspace 结果导出，以及真实 OpenClaude 任务验收
+  - 已支持 `air session export-workspace <id> <output-dir>` 导出当前 merged workspace 结果
+  - 后续需要补 Firecracker guest 的 provider 出网能力，以及真实 OpenClaude 任务验收
 
 ## P1: 调试与可观测性
 

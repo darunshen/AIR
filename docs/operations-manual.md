@@ -397,6 +397,20 @@ runtime/sessions/firecracker/<session_id>/
 - `metrics.log`：当前仅预创建，后续用于 Firecracker metrics
 - `config/*.json`：启动时实际下发的配置快照
 
+当 session 带 `--workspace` 时，可导出当前工作区结果：
+
+```bash
+air session export-workspace <session-id> /tmp/air-export
+air session export-workspace <session-id> /tmp/air-export --force
+```
+
+说明：
+
+- 导出的是当前 merged `/workspace` 视图，而不是原始只读 `workspace.ext4`
+- 默认要求输出目录为空或不存在
+- `--force` 会清空已有输出目录后再导出
+- 当前要求 session 仍处于运行中
+
 ## 7. 真机生命周期验证
 
 仓库内已经提供一个默认跳过的集成测试，用于验证：
@@ -404,6 +418,7 @@ runtime/sessions/firecracker/<session_id>/
 - `Start()` 能启动 Firecracker
 - `Exec()` 能通过 `vsock` 真实执行命令
 - 每 session 独立 `rootfs.ext4` 生效
+- `air session export-workspace` 能导出当前 merged workspace
 - `Stop()` 能正常清理
 - 运行目录产物完整
 

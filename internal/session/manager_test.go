@@ -253,6 +253,126 @@ func TestCreateWithExplicitProvider(t *testing.T) {
 	}
 }
 
+func TestExportWorkspace(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	workspace := filepath.Join(root, "host-workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "input.txt"), []byte("host\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	s, err := manager.CreateWithOptions(CreateOptions{
+		Provider:      "local",
+		WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	if _, err := manager.Exec(s.ID, "echo guest > output.txt && mkdir -p nested && echo note > nested/note.txt"); err != nil {
+		t.Fatalf("exec workspace mutation: %v", err)
+	}
+
+	exportDir := filepath.Join(root, "exported")
+	result, err := manager.ExportWorkspace(s.ID, exportDir, false)
+	if err != nil {
+		t.Fatalf("export workspace: %v", err)
+	}
+	if result.SessionID != s.ID {
+		t.Fatalf("unexpected session id: %s", result.SessionID)
+	}
+	if result.Provider != "local" {
+		t.Fatalf("unexpected provider: %s", result.Provider)
+	}
+	if result.OutputPath != exportDir {
+		t.Fatalf("unexpected output path: %s", result.OutputPath)
+	}
+
+	inputBody, err := os.ReadFile(filepath.Join(exportDir, "input.txt"))
+	if err != nil {
+		t.Fatalf("read exported input: %v", err)
+	}
+	if strings.TrimSpace(string(inputBody)) != "host" {
+		t.Fatalf("unexpected exported input: %q", string(inputBody))
+	}
+	outputBody, err := os.ReadFile(filepath.Join(exportDir, "output.txt"))
+	if err != nil {
+		t.Fatalf("read exported output: %v", err)
+	}
+	if strings.TrimSpace(string(outputBody)) != "guest" {
+		t.Fatalf("unexpected exported output: %q", string(outputBody))
+	}
+	nestedBody, err := os.ReadFile(filepath.Join(exportDir, "nested", "note.txt"))
+	if err != nil {
+		t.Fatalf("read nested note: %v", err)
+	}
+	if strings.TrimSpace(string(nestedBody)) != "note" {
+		t.Fatalf("unexpected nested note: %q", string(nestedBody))
+	}
+
+	hostOutputPath := filepath.Join(workspace, "output.txt")
+	if _, err := os.Stat(hostOutputPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected host workspace to stay unchanged, got err=%v", err)
+	}
+}
+
+func TestExportWorkspaceRequiresForceForNonEmptyDirectory(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	s, err := manager.CreateWithProvider("local")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	exportDir := filepath.Join(root, "exported")
+	if err := os.MkdirAll(exportDir, 0o755); err != nil {
+		t.Fatalf("mkdir export dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(exportDir, "keep.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write keep.txt: %v", err)
+	}
+
+	if _, err := manager.ExportWorkspace(s.ID, exportDir, false); err == nil {
+		t.Fatal("expected non-empty directory error")
+	}
+
+	if _, err := manager.Exec(s.ID, "echo fresh > exported.txt"); err != nil {
+		t.Fatalf("exec workspace mutation: %v", err)
+	}
+	if _, err := manager.ExportWorkspace(s.ID, exportDir, true); err != nil {
+		t.Fatalf("export workspace with force: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(exportDir, "keep.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected keep.txt removed by force export, got err=%v", err)
+	}
+	if body, err := os.ReadFile(filepath.Join(exportDir, "exported.txt")); err != nil {
+		t.Fatalf("read exported.txt: %v", err)
+	} else if strings.TrimSpace(string(body)) != "fresh" {
+		t.Fatalf("unexpected exported.txt content: %q", string(body))
+	}
+}
+
 func TestRunCreatesExecutesAndCleansUp(t *testing.T) {
 	t.Helper()
 

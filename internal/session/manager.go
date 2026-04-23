@@ -1,8 +1,13 @@
 package session
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +53,12 @@ type CreateOptions struct {
 	MemoryMiB     int
 	VCPUCount     int
 	WorkspacePath string
+}
+
+type ExportWorkspaceResult struct {
+	SessionID  string `json:"session_id"`
+	Provider   string `json:"provider"`
+	OutputPath string `json:"output_path"`
 }
 
 type Manager struct {
@@ -357,6 +368,57 @@ func (m *Manager) EventsPath(sessionID string) (string, error) {
 	return inspect.Runtime.EventsPath, nil
 }
 
+func (m *Manager) ExportWorkspace(sessionID, outputPath string, force bool) (*ExportWorkspaceResult, error) {
+	if outputPath == "" {
+		return nil, errors.New("output path must not be empty")
+	}
+
+	inspect, err := m.Inspect(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if inspect.Session.Status != "running" {
+		return nil, errors.New("session is not running")
+	}
+	if inspect.Session.Provider == "firecracker" && inspect.Runtime.WorkspaceImagePath == "" {
+		return nil, errors.New("firecracker session does not have a workspace attached")
+	}
+
+	outputPath, err = filepath.Abs(outputPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := prepareExportOutputPath(outputPath, force); err != nil {
+		return nil, err
+	}
+
+	result, err := m.Exec(sessionID, "tar -czf - . | base64 | tr -d '\\n'")
+	if err != nil {
+		return nil, err
+	}
+	if result.ExitCode != 0 {
+		stderr := strings.TrimSpace(result.Stderr)
+		if stderr == "" {
+			stderr = fmt.Sprintf("export command exited with code %d", result.ExitCode)
+		}
+		return nil, errors.New(stderr)
+	}
+
+	archiveBody, err := base64.StdEncoding.DecodeString(strings.TrimSpace(result.Stdout))
+	if err != nil {
+		return nil, fmt.Errorf("decode workspace archive: %w", err)
+	}
+	if err := extractTarGz(bytes.NewReader(archiveBody), outputPath); err != nil {
+		return nil, fmt.Errorf("extract workspace archive: %w", err)
+	}
+
+	return &ExportWorkspaceResult{
+		SessionID:  sessionID,
+		Provider:   inspect.Session.Provider,
+		OutputPath: outputPath,
+	}, nil
+}
+
 func (m *Manager) runtimeForSession(s *model.Session) (vm.Runtime, error) {
 	runtime, _, err := m.runtimeForProvider(s.Provider)
 	return runtime, err
@@ -479,4 +541,87 @@ func validateRunOptions(opts RunOptions) error {
 		}
 	}
 	return nil
+}
+
+func prepareExportOutputPath(path string, force bool) error {
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return os.MkdirAll(path, 0o755)
+	case err != nil:
+		return err
+	case !info.IsDir():
+		return errors.New("output path must be a directory")
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	if !force {
+		return errors.New("output directory is not empty; use --force to overwrite")
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	return os.MkdirAll(path, 0o755)
+}
+
+func extractTarGz(reader io.Reader, outputPath string) error {
+	gzr, err := gzip.NewReader(reader)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		targetPath := filepath.Join(outputPath, header.Name)
+		cleanOutput := filepath.Clean(outputPath)
+		cleanTarget := filepath.Clean(targetPath)
+		if cleanTarget != cleanOutput && !strings.HasPrefix(cleanTarget, cleanOutput+string(os.PathSeparator)) {
+			return fmt.Errorf("archive entry escapes output directory: %s", header.Name)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(cleanTarget, os.FileMode(header.Mode)); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(cleanTarget), 0o755); err != nil {
+				return err
+			}
+			file, err := os.OpenFile(cleanTarget, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(file, tr); err != nil {
+				_ = file.Close()
+				return err
+			}
+			if err := file.Close(); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			if err := os.MkdirAll(filepath.Dir(cleanTarget), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(header.Linkname, cleanTarget); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported archive entry type: %d", header.Typeflag)
+		}
+	}
 }

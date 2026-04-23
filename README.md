@@ -345,6 +345,7 @@ Debugging commands:
 - `air session console <id> --follow [--tail=N]`
 - `air session events <id> [--tail=N]`
 - `air session events <id> --follow [--tail=N]`
+- `air session export-workspace <id> <output-dir> [--force]`
 - `air agent openclaude start --repo ~/Documents/code/openclaude`
 - `air agent openclaude start --provider firecracker --workspace ~/Documents/code/my-repo`
 - `air agent openclaude status <session-id>`
@@ -369,6 +370,7 @@ Current status behavior:
 - `air session create --workspace` and `air run --workspace` can now build a read-only `workspace.ext4` plus a writable `workspace-upper.ext4` for Firecracker sessions
 - when a Firecracker session has a workspace image, the guest mounts `/workspace` via overlayfs and guest commands default to `/workspace`
 - the `/workspace` overlayfs flow has been validated on a real Firecracker guest; host source files remain unchanged after guest writes
+- `air session export-workspace <id> <output-dir>` now exports the current merged workspace view from a running session
 - `scripts/prepare-openclaude-firecracker-rootfs.sh` prepares a Firecracker guest image with Bun and OpenClaude baked in at `/opt/openclaude`
 - `scripts/prepare-openclaude-alpine-rootfs.sh` prepares a newer Alpine-based guest image for Bun/OpenClaude; this is the recommended Firecracker path for OpenClaude workloads
 - `AIR_FIRECRACKER_BOOT_ARGS` can override the Firecracker kernel command line when a guest image needs a different init or boot setup

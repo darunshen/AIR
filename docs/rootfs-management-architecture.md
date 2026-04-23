@@ -173,11 +173,12 @@ runtime/sessions/firecracker/<session-id>/
 - `/workspace` 的 overlayfs 挂载已经在真实 Firecracker guest 中验证通过
 - host 原 repo 在 guest 写入后保持不变
 - `workspace-upper.ext4` 已承接 guest 写入
+- 已支持 `air session export-workspace <id> <output-dir>` 导出当前 merged `/workspace` 视图
 
-第一版推荐导出 merged 视图：
+当前第一版实现：
 
 - guest 内把 `/workspace` 打包
-- 通过 vsock 回传到 host
+- 通过现有 exec/stdout 通道回传到 host
 - host 解包到指定输出目录
 
 后续可以优化为只导出 upperdir 差异。
@@ -257,8 +258,8 @@ Firecracker 需要至少三类 block device：
 - guest 修改 `/workspace` 后，host 原 repo 不变
 - `workspace-upper.ext4` 中可观察到写入结果
 - Firecracker guest 内 `/workspace` overlayfs 在真实环境中可用
+- `air session export-workspace <id> <output-dir>` 能导出 merged workspace 结果
 
 仍未完成：
 
-- `air session export-workspace <id>` 或等价结果导出命令
 - Firecracker guest 内真实 OpenClaude 任务验收

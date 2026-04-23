@@ -173,11 +173,12 @@ Current status:
 - the `/workspace` overlayfs mount has been validated in a real Firecracker guest
 - the original host repo remains unchanged after guest writes
 - `workspace-upper.ext4` now receives guest writes
+- `air session export-workspace <id> <output-dir>` now exports the current merged `/workspace` view
 
-The first version should export the merged view:
+Current first-version implementation:
 
 - guest packages `/workspace`
-- guest sends the archive back over vsock
+- guest sends the archive back through the current exec/stdout path
 - host extracts it into a requested output directory
 
 A later version can optimize this into upperdir-only diff export.
@@ -257,8 +258,8 @@ First-version acceptance criteria:
 - host source repo remains unchanged after guest writes to `/workspace`
 - writes are observable in `workspace-upper.ext4`
 - `/workspace` overlayfs works in a real Firecracker guest
+- `air session export-workspace <id> <output-dir>` exports the merged workspace result
 
 Still not finished:
 
-- `air session export-workspace <id>` or an equivalent result export path
 - validation of a real OpenClaude task inside Firecracker guests

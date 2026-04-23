@@ -39,6 +39,15 @@ When `--workspace` is used, AIR also prepares:
 
 Inside the guest, `workspace.ext4` and `workspace-upper.ext4` are mounted as an overlayfs-backed `/workspace`.
 
+When a session has a workspace attached, you can export the current merged workspace view:
+
+```bash
+air session export-workspace <session-id> /tmp/air-export
+air session export-workspace <session-id> /tmp/air-export --force
+```
+
+This exports the current merged `/workspace` view, not the original read-only `workspace.ext4`. By default the output directory must be empty or absent; `--force` recreates it.
+
 ## 6. Runtime Directory Layout
 
 AIR persists runtime state on the host so operators can inspect sessions, config files, sockets, metrics, and logs.
@@ -70,6 +79,7 @@ The current real-machine validation baseline is:
 - `Exec()` works over `vsock`
 - per-session `rootfs.ext4` wiring works
 - `/workspace` overlayfs works when a workspace is attached
+- `air session export-workspace` exports the current merged workspace
 
 ## 8. Common Failures
 
