@@ -1,50 +1,64 @@
-# AIR Project Plan
+# AIR Project Plan (Historical Archive)
 
 [中文](project-plan.md)
 
-## 1. Project Overview
+This document preserves an early planning snapshot for AIR. It is useful for understanding the original MVP/V1/V2 breakdown, but it is not the current product baseline.
 
-AIR is an isolated execution runtime for AI agents. The project goal is to provide a safe, disposable, and reproducible VM boundary for untrusted code.
+Important:
 
-## 2. Business Value
+- do not treat this document as the current capability matrix
+- use root `README.md`, `ROADMAP.md`, and `TODO.md` for current status and priorities
+- statements here about "not yet implemented" may already be outdated
 
-- reduce host risk for AI-generated code execution
-- provide a reusable sandbox backend for agent products
-- lower the engineering cost of building isolation in-house
-- prepare for later API, multi-tenant, and scheduling expansion
+## 1. Early Project Positioning
 
-## 3. Milestones
+AIR (Agent Isolation Runtime) was originally framed as an isolated execution runtime for AI agents, intended to provide a safe, disposable, and reproducible VM boundary for untrusted code.
+
+## 2. Early Goals
+
+- one-shot execution through `air run`
+- stateful execution through `air session create/exec/delete`
+- default no-network execution with CPU, memory, and timeout controls
+- reproducibility and fast recovery through base images, overlays, and snapshots
+
+## 3. Early Milestone Breakdown
 
 ### Phase 1: MVP
 
-Deliver `air session create`, `air session exec`, and `air session delete` on a single machine with local JSON state and default no-network behavior.
+The original MVP scope included:
+
+- `air session create`
+- `air session exec <id> "<cmd>"`
+- `air session delete <id>`
+- single-machine deployment
+- local JSON session state
+- file-based host/guest communication
+- default no-network behavior
 
 ### Phase 2: V1
 
-Add guest agent communication over `virtio-serial` or `vsock`, HTTP APIs, overlay-based rootfs management, timeout handling, logs, and garbage collection.
+The original V1 plan included:
+
+- a guest agent
+- `virtio-serial` or `vsock` communication
+- an HTTP API
+- `base image + overlay` rootfs management
+- timeouts, logs, and garbage collection
 
 ### Phase 3: V2
 
-Add snapshot and restore, warm VM pools, streaming output, whitelist networking, and baseline monitoring.
+The original V2 plan included:
 
-## 4. Suggested Work Split
+- snapshot / restore
+- warm VM pools
+- streaming output
+- allowlisted networking
+- quotas and monitoring
 
-- virtualization and low-level runtime
-- control-plane backend
-- platform engineering, build, release, and observability
-- product definition and acceptance criteria
+## 4. What Still Matters
 
-## 5. Major Risks
+Even as a historical document, a few themes still matter:
 
-- unstable host/guest communication
-- leaked or unrecoverable session state
-- high cold-start latency
-- guest agent crashes making sessions unusable
-
-## 6. Acceptance Criteria
-
-- sessions can be created, executed, and deleted
-- state persists across exec calls in the same session
-- VMs have no network by default
-- timeouts and abnormal exits surface clearly
-- idle sessions can be reclaimed
+- AIR is an isolated runtime for agent workflows, not a general-purpose container platform
+- host/guest communication, state cleanup, and startup latency remain core engineering constraints
+- lifecycle management, image management, and observability still need continuous hardening

@@ -11,10 +11,15 @@
 - 修改任意一份时，需要在同一提交中同步更新另一份
 - `README.md` 允许作为仓库落地页保留双语内容，但长文档优先拆成成对文件
 
-## 核心文档
+文档状态分层：
+
+- `Canonical`：当前仍应作为权威事实来源的设计、产品、架构文档
+- `Operational`：面向部署、操作、调试、验收的当前使用文档
+- `Historical`：保留历史背景或阶段性快照，不应作为当前能力基线
+
+## Canonical
 
 - [产品说明书](prd.md) | [English](prd.en.md)
-- [项目计划](project-plan.md) | [English](project-plan.en.md)
 - [技术架构](technical-architecture.md) | [English](technical-architecture.en.md)
 - [接口设计](api-design.md) | [English](api-design.en.md)
 - [数据模型](data-model.md) | [English](data-model.en.md)
@@ -23,8 +28,15 @@
 - [根文件系统管理架构](rootfs-management-architecture.md) | [English](rootfs-management-architecture.en.md)
 - [AI Agent 选型](agent-selection.md) | [English](agent-selection.en.md)
 - [AI Agent 使用说明](ai-agent-usage.md) | [English](ai-agent-usage.en.md)
+- [OpenClaude 接入方案](openclaude-integration.md) | [English](openclaude-integration.en.md)
+
+## Operational
+
 - [Firecracker 真机部署指南](firecracker-deployment-guide.md) | [English](firecracker-deployment-guide.en.md)
 - [操作手册](operations-manual.md) | [English](operations-manual.en.md)
 - [发布与安装包交付](release-distribution.md) | [English](release-distribution.en.md)
 - [LLM 验收结果](llm-acceptance-results.md) | [English](llm-acceptance-results.en.md)
-- [OpenClaude 接入方案](openclaude-integration.md) | [English](openclaude-integration.en.md)
+
+## Historical
+
+- [项目计划](project-plan.md) | [English](project-plan.en.md)

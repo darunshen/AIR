@@ -140,7 +140,7 @@ air agent openclaude forward <session-id> --listen 127.0.0.1:50052
 
 AIR now implements this first launcher baseline:
 
-- default startup command: `bun run scripts/start-grpc.ts`
+- default startup command: `/usr/local/bin/bun run scripts/start-grpc.ts`
 - default bind address: `127.0.0.1:50051`
 - `--command` can override the startup command for tests or repo-specific differences
 - session runtime metadata is recorded in `openclaude.json`
@@ -148,6 +148,7 @@ AIR now implements this first launcher baseline:
 - `air session delete <session-id>` attempts to stop the managed OpenClaude process before tearing down the session
 - `air agent openclaude forward` opens a local host TCP port and forwards it to the session's OpenClaude TCP endpoint
 - on `local`, this forwards directly to host TCP; on `firecracker`, it forwards through an `air-agent` vsock proxy sub-protocol into guest TCP
+- on Firecracker guests, AIR injects a session-private writable `HOME` and `CLAUDE_CONFIG_DIR` so OpenClaude does not try to write global config into a read-only rootfs
 
 Example:
 
@@ -196,6 +197,8 @@ In this layout:
 - the guest starts `air-agent` through `/etc/inittab` on boot
 - on the `firecracker` provider, AIR falls back to `/opt/openclaude` when `--guest-repo` is not explicitly provided
 - `air session create --provider firecracker --workspace /path/to/repo` now attaches a read-only `workspace.ext4` and a writable `workspace-upper.ext4`, then mounts them as `/workspace` inside the guest
+- `/opt/openclaude` is the guest program directory, not the user task workspace
+- `/workspace` is the repo and task working directory; the OpenClaude server starts from `/opt/openclaude`, but real tasks should target `/workspace`
 - if you must keep an existing ext4 guest baseline, `scripts/prepare-openclaude-firecracker-rootfs.sh` still exists, but it only works when the guest userspace is already Bun-compatible
 
 ### Phase C: Productized bridge
@@ -207,6 +210,34 @@ Current direction:
 - AIR now has a base TCP bridge via `air agent openclaude forward`
 - the next layer is an OpenClaude-aware client / UX on top of that bridge
 - later we can add reconnect / replay / policy controls when needed
+
+## 5.2 Current Real Status
+
+The current state is no longer “OpenClaude in AIR still needs to be started”. The current state is:
+
+### Implemented
+
+- `air agent openclaude start/status/stop/forward`
+- long-running OpenClaude process management with pid/log metadata
+- Firecracker guest startup command and provider env injection
+- session-private writable `HOME` / `CLAUDE_CONFIG_DIR` inside Firecracker guests
+- `scripts/prepare-openclaude-alpine-rootfs.sh`
+- `scripts/run-openclaude-firecracker-acceptance.sh`
+- `air session export-workspace`
+
+### Validated
+
+- OpenClaude startup and status on the `local` provider
+- `/workspace` overlay flow inside real Firecracker guests
+- OpenClaude gRPC startup and listening inside Firecracker guests
+- host-to-guest OpenClaude forwarding on Firecracker
+- real Firecracker OpenClaude acceptance covering startup, forward, task execution, workspace export, and result verification
+
+### Still Being Hardened
+
+- guest networking and provider policy controls for OpenClaude workloads
+- stronger reconnect, replay, and policy behavior
+- a more productized host-side client and UX layer
 
 ## 5.1 Capability Impact Matrix
 

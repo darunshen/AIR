@@ -640,6 +640,60 @@ func TestResolveOpenClaudeRepoPathUsesGuestDefaultForFirecracker(t *testing.T) {
 	}
 }
 
+func TestNormalizeOpenClaudeStartOptionsCollectsProviderEnv(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("CLAUDE_CODE_USE_OPENAI", "1")
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+	t.Setenv("OPENAI_MODEL", "deepseek-chat")
+	t.Setenv("UNRELATED_ENV", "should-not-pass")
+
+	opts := normalizeOpenClaudeStartOptions(OpenClaudeStartOptions{})
+	if opts.Env["CLAUDE_CODE_USE_OPENAI"] != "1" {
+		t.Fatalf("expected CLAUDE_CODE_USE_OPENAI in env, got %+v", opts.Env)
+	}
+	if opts.Env["OPENAI_API_KEY"] != "sk-test" {
+		t.Fatalf("expected OPENAI_API_KEY in env, got %+v", opts.Env)
+	}
+	if _, ok := opts.Env["UNRELATED_ENV"]; ok {
+		t.Fatalf("did not expect unrelated env to be passed: %+v", opts.Env)
+	}
+}
+
+func TestRenderOpenClaudeStartCommandIncludesWhitelistedEnv(t *testing.T) {
+	t.Helper()
+
+	meta := &openClaudeMetadata{
+		SessionID: "sess_123",
+		RepoPath:  "/workspace/openclaude",
+		Command:   "bun run scripts/start-grpc.ts",
+		Host:      "127.0.0.1",
+		Port:      50051,
+		StateDir:  "/run/air/openclaude/sess_123",
+		PIDPath:   "/run/air/openclaude/sess_123/server.pid",
+		LogPath:   "/run/air/openclaude/sess_123/server.log",
+	}
+	command := renderOpenClaudeStartCommand(meta, map[string]string{
+		"CLAUDE_CODE_USE_OPENAI": "1",
+		"OPENAI_API_KEY":         "sk-test",
+		"OPENAI_MODEL":           "deepseek-chat",
+	})
+	for _, part := range []string{
+		"GRPC_HOST='127.0.0.1'",
+		"GRPC_PORT='50051'",
+		"HOME='/run/air/openclaude/sess_123/home'",
+		"CLAUDE_CONFIG_DIR='/run/air/openclaude/sess_123/home/.openclaude'",
+		"CLAUDE_CODE_USE_OPENAI='1'",
+		"OPENAI_API_KEY='sk-test'",
+		"OPENAI_MODEL='deepseek-chat'",
+	} {
+		if !strings.Contains(command, part) {
+			t.Fatalf("expected command to contain %q, got %s", part, command)
+		}
+	}
+}
+
 func TestDeleteStopsManagedOpenClaudeProcess(t *testing.T) {
 	t.Helper()
 

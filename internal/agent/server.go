@@ -31,7 +31,6 @@ func NewServer(listener net.Listener) *Server {
 }
 
 func (s *Server) Serve(ctx context.Context) error {
-	errCh := make(chan error, 1)
 	go func() {
 		<-ctx.Done()
 		_ = s.listener.Close()
@@ -51,19 +50,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 
 		go func() {
-			if err := s.handleConn(ctx, conn); err != nil {
-				select {
-				case errCh <- err:
-				default:
-				}
-			}
+			// A single client/proxy stream must not take down the entire guest agent.
+			_ = s.handleConn(ctx, conn)
 		}()
-
-		select {
-		case err := <-errCh:
-			return err
-		default:
-		}
 	}
 }
 

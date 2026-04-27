@@ -146,7 +146,7 @@ air agent openclaude forward <session-id> --listen 127.0.0.1:50052
 
 当前 AIR 已实现这个第一版 launcher：
 
-- 默认启动命令是 `bun run scripts/start-grpc.ts`
+- 默认启动命令是 `/usr/local/bin/bun run scripts/start-grpc.ts`
 - 默认监听 `127.0.0.1:50051`
 - 可通过 `--command` 覆盖启动命令，便于测试或适配 OpenClaude 版本差异
 - 会在 session runtime 目录记录 `openclaude.json`
@@ -154,6 +154,7 @@ air agent openclaude forward <session-id> --listen 127.0.0.1:50052
 - `air session delete <session-id>` 会先尝试停止托管的 OpenClaude 进程，再清理 session
 - `air agent openclaude forward` 会在宿主机打开本地 TCP 端口，并转发到 session 内的 OpenClaude TCP endpoint
 - `local` provider 下直接转发到本机 TCP；`firecracker` provider 下通过 `air-agent` 的 vsock proxy 子协议转发到 guest 内 TCP
+- Firecracker guest 下会显式注入 session 私有可写 `HOME` 与 `CLAUDE_CONFIG_DIR`，避免 OpenClaude 向只读根盘写入全局配置
 
 示例：
 
@@ -202,6 +203,8 @@ air agent openclaude start \
 - guest 通过 `/etc/inittab` 在启动时拉起 `air-agent`
 - `firecracker` provider 下，如果没有显式指定 `--guest-repo`，AIR 默认会回落到 `/opt/openclaude`
 - `air session create --provider firecracker --workspace /path/to/repo` 会额外挂入只读 `workspace.ext4` 和可写 `workspace-upper.ext4`，并在 guest 内挂载为 `/workspace`
+- `/opt/openclaude` 是 guest 内 agent 程序目录，不是用户任务工作区
+- `/workspace` 才是 repo / 任务工作目录，OpenClaude gRPC server 从 `/opt/openclaude` 启动，但实际任务应面向 `/workspace`
 - 如果确实要继续复用已有 ext4 rootfs，也可以使用 `scripts/prepare-openclaude-firecracker-rootfs.sh`，但这条路只适合底层用户态已经满足 Bun 运行要求的镜像
 
 ### 阶段 C：产品化桥接
@@ -214,6 +217,34 @@ air agent openclaude start \
 - 后续需要在这个 TCP bridge 上包装 OpenClaude-aware client / UX
 - 将用户请求自动转给指定 session 内的 OpenClaude server
 - 可选加入会话恢复、权限策略、日志回放
+
+## 5.2 当前真实状态
+
+当前状态不再是“还没开始做 OpenClaude in AIR”，而是：
+
+### 已实现
+
+- `air agent openclaude start/status/stop/forward`
+- OpenClaude 长驻进程托管与 pid/log 元数据
+- Firecracker guest 内 OpenClaude 启动命令和 provider 环境注入
+- Firecracker guest 内 session 私有可写 `HOME` / `CLAUDE_CONFIG_DIR`
+- `scripts/prepare-openclaude-alpine-rootfs.sh`
+- `scripts/run-openclaude-firecracker-acceptance.sh`
+- `air session export-workspace`
+
+### 已验证
+
+- `local` provider 下 OpenClaude 启动与状态查询
+- Firecracker guest 内 `/workspace` overlay 工作区链路
+- Firecracker guest 内 OpenClaude gRPC server 启动与监听
+- Firecracker guest 下 host 到 guest 的 OpenClaude forward 链路
+- 真实 Firecracker OpenClaude acceptance：启动、forward、任务执行、workspace 导出、结果校验
+
+### 仍在继续增强
+
+- OpenClaude guest 网络与 provider 策略能力
+- 更细的策略控制、重连和回放体验
+- 更完整的产品化 host client / UX
 
 ## 5.1 能力影响矩阵
 

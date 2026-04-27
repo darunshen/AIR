@@ -43,6 +43,7 @@ BUN_BIN="${4:-}"
 DEFAULT_PORT=10789
 DEFAULT_PROXY_LISTEN="127.0.0.1:18080"
 DEFAULT_PROXY_VSOCK_PORT=18080
+ALPINE_RUNTIME_PACKAGES="libgcc libstdc++"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -70,6 +71,76 @@ resolve_arch() {
   esac
 }
 
+resolve_alpine_branch() {
+  local source_path="$1"
+  local version
+  version="$(basename "${source_path}" | sed -n 's/^alpine-minirootfs-\([0-9]\+\.[0-9]\+\)\.[0-9]\+-.*$/v\1/p')"
+  if [[ -z "${version}" ]]; then
+    echo "failed to resolve Alpine branch from ${source_path}" >&2
+    exit 1
+  fi
+  echo "${version}"
+}
+
+resolve_apk_filename() {
+  local index_file="$1"
+  local package_name="$2"
+  awk -v pkg="${package_name}" '
+    BEGIN { RS=""; FS="\n" }
+    {
+      name=""
+      version=""
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^P:/) {
+          name = substr($i, 3)
+        }
+        if ($i ~ /^V:/) {
+          version = substr($i, 3)
+        }
+      }
+      if (name == pkg && version != "") {
+        print name "-" version ".apk"
+        exit
+      }
+    }
+  ' "${index_file}"
+}
+
+install_alpine_runtime_package() {
+  local repo_url="$1"
+  local index_file="$2"
+  local package_name="$3"
+  local apk_name
+  local apk_path
+
+  apk_name="$(resolve_apk_filename "${index_file}" "${package_name}")"
+  if [[ -z "${apk_name}" ]]; then
+    echo "failed to resolve package ${package_name} from ${index_file}" >&2
+    exit 1
+  fi
+
+  apk_path="${tmpdir}/${apk_name}"
+  echo "Downloading Alpine package ${apk_name}..."
+  curl -fsSL "${repo_url}/${apk_name}" -o "${apk_path}"
+  tar -xzf "${apk_path}" \
+    --exclude='.PKGINFO' \
+    --exclude='.SIGN.*' \
+    --exclude='.INSTALL' \
+    --exclude='.post-install' \
+    -C "${stage_root}"
+}
+
+is_musl_bun() {
+  local bun_path="$1"
+  if [[ ! -x "${bun_path}" ]]; then
+    return 1
+  fi
+  if ! readelf -l "${bun_path}" 2>/dev/null | grep -q "Requesting program interpreter:"; then
+    return 0
+  fi
+  readelf -l "${bun_path}" 2>/dev/null | grep -q "/ld-musl-"
+}
+
 require_cmd awk
 require_cmd cp
 require_cmd curl
@@ -79,7 +150,9 @@ require_cmd install
 require_cmd mkdir
 require_cmd mkfs.ext4
 require_cmd mktemp
+require_cmd readelf
 require_cmd rm
+require_cmd sed
 require_cmd tar
 require_cmd truncate
 require_cmd unzip
@@ -133,6 +206,23 @@ if [[ ! -f "${ALPINE_MINIROOTFS}" ]]; then
   exit 1
 fi
 
+alpine_branch="$(resolve_alpine_branch "${ALPINE_MINIROOTFS}")"
+alpine_repo_url="https://dl-cdn.alpinelinux.org/alpine/${alpine_branch}/main/${arch}"
+alpine_apk_index="${tmpdir}/APKINDEX"
+echo "Downloading Alpine package index for ${alpine_branch}/${arch}..."
+curl -fsSL "${alpine_repo_url}/APKINDEX.tar.gz" -o "${tmpdir}/APKINDEX.tar.gz"
+tar -xOf "${tmpdir}/APKINDEX.tar.gz" APKINDEX > "${alpine_apk_index}"
+
+if [[ -z "${BUN_BIN}" ]] && command -v bun >/dev/null 2>&1; then
+  host_bun="$(command -v bun)"
+  if is_musl_bun "${host_bun}"; then
+    BUN_BIN="${host_bun}"
+    echo "Using host musl Bun: ${BUN_BIN}"
+  else
+    echo "Host bun is not musl-compatible for Alpine guest, falling back to official musl release: ${host_bun}"
+  fi
+fi
+
 if [[ -z "${BUN_BIN}" ]]; then
   case "${arch}" in
     x86_64)
@@ -180,6 +270,7 @@ mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mount -t tmpfs tmpfs /run 2>/dev/null || true
 mount -t tmpfs tmpfs /tmp 2>/dev/null || true
 mount -t tmpfs tmpfs /var/log 2>/dev/null || true
+ip link set lo up 2>/dev/null || ifconfig lo up 2>/dev/null || true
 LOG_FILE=/run/air-agent.log
 echo "[air-agent] boot hook start" >>"\${LOG_FILE}"
 echo "[air-agent] boot hook start" >>/dev/console 2>&1 || true
@@ -234,6 +325,10 @@ mkdir -p "${stage_root}/opt" "${stage_root}/usr/local/bin" "${stage_root}/var/lo
 cp -a "${OPENCLAUDE_REPO}" "${stage_root}/opt/openclaude"
 rm -rf "${stage_root}/opt/openclaude/.git" "${stage_root}/opt/openclaude/.air"
 find "${stage_root}/opt/openclaude" -name '.DS_Store' -delete
+
+for pkg in ${ALPINE_RUNTIME_PACKAGES}; do
+  install_alpine_runtime_package "${alpine_repo_url}" "${alpine_apk_index}" "${pkg}"
+done
 
 install -D -m 0755 "${tmpdir}/air-agent" "${stage_root}/usr/bin/air-agent"
 install -D -m 0755 "${tmpdir}/air-init" "${stage_root}/usr/local/bin/air-init"

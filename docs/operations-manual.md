@@ -1,175 +1,99 @@
 # AIR 操作手册
 
-本文档描述当前仓库版本的实际操作方式，重点覆盖：
+[English](operations-manual.en.md)
 
-- 如何在本地启动和验证 AIR
-- 如何在 `local` 与 `firecracker` 两种 runtime provider 间切换
-- 如何查看运行产物和排查常见问题
-- 当前版本已经实现和暂未实现的能力边界
+本文档只描述当前版本 AIR 的实际使用、排障和运行产物。
 
-## 1. 当前状态
+边界说明：
 
-截至当前代码版本：
+- 宿主机安装、KVM 检查、Firecracker 资产准备，见 [Firecracker 真机部署指南](firecracker-deployment-guide.md)
+- 产品定位、能力边界、路线图，见根目录 `README.md`、`ROADMAP.md`、`TODO.md`
+- 本文不重复展开部署指南中的环境准备步骤
 
+## 1. 当前可用能力
+
+当前 CLI 入口：
+
+- `air version`
 - `air run`
 - `air session create`
 - `air session list`
 - `air session inspect`
 - `air session console`
+- `air session events`
 - `air session exec`
+- `air session export-workspace`
 - `air session delete`
+- `air init firecracker`
+- `air doctor --provider firecracker`
 
-已经可以通过 `local` provider 完整使用。
+当前 runtime provider：
 
-`air run` 已经具备：
+- `local`
+- `firecracker`
 
-- 一次性创建隔离环境
-- 执行单条命令
-- 返回结构化结果
-- 自动销毁临时 session
-- 支持 `--timeout`
-- 支持 `--memory-mib`
-- 支持 `--vcpu-count`
+当前 Firecracker 路径已经打通：
 
-仓库还提供了一个最小 reference agent：
-
-- `examples/agent-runner`
-- 用于验证 AIR 是否适合 agent 消费
-- 当前已支持 OpenAI planner
-- 当前已支持 DeepSeek planner
-- 当前也保留 `scripted` planner 作为离线 fallback
-- 当前内置 one-shot、session 多步执行、失败恢复三类任务
-
-关于外部 LLM agent 的选型与环境建议，见：
-
-- [AI Agent 选型与接入方案](agent-selection.md)
-- [通过 AI Agent 使用 AIR](ai-agent-usage.md)
-
-关于安装包、GitHub Release 和 `.deb` 交付，见：
-
-- [发布与安装包交付](release-distribution.md)
-
-`firecracker` provider 已经具备：
-
-- 启动前环境预检
-- Firecracker 进程启动
-- Host 侧 API 配置
-- guest rootfs 注入脚本
+- 宿主机预检
+- Firecracker microVM 启动
 - guest `air-agent` 启动链
-- Host/Guest `vsock exec`
-- 运行目录和日志产物落盘
-- `Stop()` 清理
+- Host/Guest `vsock` exec
+- 每 session 独立 `rootfs.ext4`
+- 可选只读 `workspace.ext4` + 可写 `workspace-upper.ext4`
+- `air session export-workspace` 导出 guest 当前 merged `/workspace`
 
-因此，当前如果切到 `firecracker` provider，并且 rootfs 已通过仓库脚本注入 `air-agent`，`Start()`、`Exec()` 和 `Stop()` 都可以真实工作。
+## 2. 快速开始
 
-当前调试方式：
+### 2.1 本地模式
 
-- 用 `air session list` 查看现有 session
-- 用 `air session inspect <id>` 查看 session 与 runtime 状态
-- 用 `air session console <id>` 查看串口日志
-- 用 `air session console <id> --follow` 持续跟随串口日志
-- 用 `air session events <id>` 查看结构化事件日志
-- 用 `air session events <id> --follow` 跟随生命周期和 exec 事件
+```bash
+air run -- echo hello
+air session create --provider local
+air session exec <session_id> "echo hello > a.txt"
+air session exec <session_id> "cat a.txt"
+air session delete <session_id>
+```
 
-注意：
+### 2.2 Firecracker 模式
 
-- 这里的 `console` 目前是日志查看，不是交互式 guest shell
-- `list` / `inspect` 会根据 runtime 实况刷新 session 状态，不只是读取 JSON 中的旧值
-
-## 2. 环境要求
-
-### 2.1 基础开发环境
-
-- Go 1.22 或更新版本
-- Linux、macOS 或 Windows 可用于本地 `local` provider 开发
-
-### 2.2 Firecracker 实验环境
-
-`firecracker` provider 需要：
-
-- Linux
-- KVM 可用
-- 可访问 `/dev/kvm`
-- 已安装 Firecracker 二进制
-- 可启动的 Linux kernel 镜像
-- 可启动的 rootfs 镜像
-
-如果缺少这些条件，AIR 会在启动前直接报错。
-
-建议先执行：
+先完成宿主机准备，再执行：
 
 ```bash
 air init firecracker
 air doctor --provider firecracker --human
+air session create --provider firecracker
+air session exec <session_id> "uname -a"
+air session inspect <session_id>
+air session console <session_id> --follow
+air session events <session_id> --follow
+air session delete <session_id>
 ```
 
-如果你使用的是 `.deb` 安装包，需要注意当前包只安装 `air` / `air-agent` CLI，不会附带 Firecracker、`vmlinux`、`rootfs.ext4`。
+## 3. `air run`
 
-更细的宿主机准备步骤见：
-
-- [Firecracker 真机部署指南](firecracker-deployment-guide.md)
-
-## 3. 仓库准备
-
-在仓库根目录执行：
+一次性执行示例：
 
 ```bash
-go test ./...
+air run -- echo hello
+air run --timeout 5s -- sh -c 'echo hello && exit 3'
+air run --memory-mib 512 --vcpu-count 2 -- echo hello
+air run --provider firecracker -- echo hello
 ```
 
-如果只想生成 CLI：
+默认输出为结构化 JSON，重点字段包括：
 
-```bash
-go build ./cmd/air
-```
-
-也可以直接使用：
-
-```bash
-go run ./cmd/air run -- echo hello
-go run ./cmd/air run --memory-mib 512 --vcpu-count 2 -- echo hello
-go run ./cmd/air init firecracker --source custom
-go run ./cmd/air doctor --provider firecracker --human
-go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
-go run ./examples/agent-runner --task all
-go run ./examples/agent-runner --planner deepseek --model deepseek-chat --task all
-go run ./examples/agent-runner --planner scripted --task all
-go run ./cmd/air session create
-go run ./cmd/air session create --provider local
-go run ./cmd/air session create --provider firecracker
-```
-
-## 4. 本地模式操作
-
-`local` provider 是默认模式，不需要额外配置。
-
-### 4.1 一次性执行
-
-```bash
-go run ./cmd/air run -- echo hello
-go run ./cmd/air run --memory-mib 512 --vcpu-count 2 -- echo hello
-go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
-```
-
-其中：
-
-- `--timeout` 控制单次执行超时
-- `--memory-mib` 控制 Firecracker VM 内存上限
-- `--vcpu-count` 控制 Firecracker VM vCPU 数
-- `local` provider 当前会接受这两个参数，但不会真的做 CPU/内存隔离
-
-默认输出为结构化 JSON，字段包括：
-
+- `provider`
+- `session_id`
+- `request_id`
 - `stdout`
 - `stderr`
 - `exit_code`
-- `request_id`
 - `duration_ms`
 - `timeout`
 - `error_type`
 - `error_message`
 
-当前 `error_type` 的稳定取值包括：
+当前稳定的 `error_type` 主要包括：
 
 - `invalid_argument`
 - `startup_error`
@@ -178,176 +102,83 @@ go run ./cmd/air run --timeout 5s -- sh -c 'echo hello && exit 3'
 - `timeout`
 - `cleanup_error`
 
-其中：
-
-- 命令非零退出时会返回 `exec_error`
-- 超时时会返回 `timeout`
-- Firecracker 启动前环境问题通常返回 `startup_error`
-
-如果想使用更适合人工查看的输出，可加：
+如果需要更适合人工查看的输出：
 
 ```bash
-go run ./cmd/air run --human -- echo hello
+air run --human -- echo hello
 ```
 
-### 4.2 创建 session
+## 4. Session 生命周期
+
+### 4.1 创建
 
 ```bash
-go run ./cmd/air session create
+air session create
+air session create --provider local
+air session create --provider firecracker
+air session create --provider firecracker --workspace /absolute/path/to/repo
 ```
 
-输出为一个 session ID，例如：
+### 4.2 列表与详情
 
-```text
-sess_xxx
+```bash
+air session list
+air session inspect <session_id>
 ```
+
+说明：
+
+- `list` / `inspect` 会结合当前 runtime 实况刷新状态
+- 它们不只是读取 `data/sessions.json` 的旧值
 
 ### 4.3 执行命令
 
 ```bash
-go run ./cmd/air session exec <session_id> "echo hello > a.txt"
-go run ./cmd/air session exec <session_id> "cat a.txt"
+air session exec <session_id> "pwd"
+air session exec <session_id> "ls -la"
+air session exec <session_id> "go test ./..."
 ```
 
-在 `local` provider 下，命令会在该 session 独立 workspace 中执行，文件状态会保留到 session 删除为止。
-
-### 4.4 删除 session
+### 4.4 查看日志
 
 ```bash
-go run ./cmd/air session delete <session_id>
+air session console <session_id>
+air session console <session_id> --follow
+air session console <session_id> --tail=100
+air session events <session_id>
+air session events <session_id> --follow
 ```
 
-删除后会同时移除对应运行目录，并从 `data/sessions.json` 中清除记录。
+说明：
 
-### 4.5 查看 session 列表
+- `console` 是串口日志查看，不是交互式 shell
+- `events` 是结构化事件流，适合看生命周期、exec、错误语义
+
+### 4.5 导出工作区
+
+如果 session 启动时附带了 `--workspace`，可以导出当前 guest 里的 merged `/workspace` 视图：
 
 ```bash
-go run ./cmd/air session list
+air session export-workspace <session_id> /tmp/air-export
+air session export-workspace <session_id> /tmp/air-export --force
 ```
 
-### 4.6 查看 session 详情
+说明：
+
+- 导出的不是原始只读 `workspace.ext4`
+- 导出的是当前 merged overlay 结果
+- 默认要求输出目录不存在或为空
+- `--force` 会清空已有输出目录后再导出
+
+### 4.6 删除
 
 ```bash
-go run ./cmd/air session inspect <session_id>
+air session delete <session_id>
 ```
 
-### 4.6 查看控制台日志
+## 5. 运行目录与日志
 
-```bash
-go run ./cmd/air session console <session_id>
-go run ./cmd/air session console <session_id> --follow
-go run ./cmd/air session console <session_id> --tail=100
-go run ./cmd/air session events <session_id>
-go run ./cmd/air session events <session_id> --follow
-```
-
-## 5. Firecracker 模式操作
-
-### 5.1 环境变量
-
-如果想先确认当前机器是否具备 Firecracker 运行条件，先执行：
-
-```bash
-go run ./cmd/air init firecracker
-go run ./cmd/air doctor --provider firecracker --human
-```
-
-`air init firecracker` 会先询问：
-
-- 是否下载 AIR 官方镜像包
-- 还是用户自己部署 Firecracker 资产
-
-如果选择 AIR 官方镜像，命令会下载当前 AIR 版本对应的官方 bundle。
-
-切换到 `firecracker` provider 前，至少需要设置：
-
-```bash
-export AIR_VM_RUNTIME=firecracker
-export AIR_FIRECRACKER_BIN=firecracker
-export AIR_FIRECRACKER_KERNEL=/path/to/vmlinux
-export AIR_FIRECRACKER_ROOTFS=/path/to/rootfs.ext4
-export AIR_KVM_DEVICE=/dev/kvm
-```
-
-其中：
-
-- `AIR_VM_RUNTIME` 默认为 `local`
-- `AIR_FIRECRACKER_BIN` 默认为 `firecracker`
-- `AIR_KVM_DEVICE` 默认为 `/dev/kvm`
-
-如果你还没有准备好 Firecracker 二进制、kernel 和 rootfs，先看：
-
-- [Firecracker 真机部署指南](firecracker-deployment-guide.md)
-
-如果只是先把 AIR 当前的 Firecracker 生命周期跑通，优先执行：
-
-```bash
-scripts/fetch-firecracker-demo-assets.sh
-scripts/prepare-firecracker-rootfs.sh
-```
-
-它会下载：
-
-- 官方 release 的 `firecracker`
-- 官方 demo `hello-vmlinux.bin`
-- 官方 demo `hello-rootfs.ext4`
-
-并生成：
-
-- 注入了 `air-agent` 的 `hello-rootfs-air.ext4`
-
-### 5.2 创建 session
-
-```bash
-go run ./cmd/air session create
-```
-
-如果环境满足要求，AIR 会：
-
-- 启动 Firecracker 进程
-- 创建 API socket
-- 写入 machine、boot、drive、vsock 配置
-- 启动 microVM
-
-如果你不想依赖当前 shell 的默认 provider，也可以显式指定：
-
-```bash
-go run ./cmd/air session create --provider firecracker
-```
-
-### 5.3 执行命令
-
-```bash
-go run ./cmd/air session exec <session_id> "uname -a"
-```
-
-前提是当前使用的 rootfs 已经过 `scripts/prepare-firecracker-rootfs.sh` 处理，或者 `AIR_FIRECRACKER_ROOTFS` 指向等价的已注入镜像。
-
-### 5.4 删除 session
-
-```bash
-go run ./cmd/air session delete <session_id>
-```
-
-该操作会尝试：
-
-- 读取 `firecracker.pid`
-- 杀掉 Firecracker 进程
-- 清理整個 session 运行目录
-
-### 5.5 查看 Firecracker 状态和日志
-
-```bash
-go run ./cmd/air session inspect <session_id>
-go run ./cmd/air session console <session_id>
-go run ./cmd/air session console <session_id> --follow
-```
-
-## 6. 运行目录说明
-
-### 6.1 本地模式
-
-`local` provider 运行目录：
+### 5.1 Local provider
 
 ```text
 runtime/sessions/local/<session_id>/
@@ -355,16 +186,7 @@ runtime/sessions/local/<session_id>/
   task/
 ```
 
-说明：
-
-- `workspace/`：命令执行工作目录
-- `task/cmd.sh`：最近一次执行命令记录
-- `task/result.txt`：最近一次标准输出
-- `task/stderr.txt`：最近一次标准错误
-
-### 6.2 Firecracker 模式
-
-`firecracker` provider 运行目录：
+### 5.2 Firecracker provider
 
 ```text
 runtime/sessions/firecracker/<session_id>/
@@ -378,166 +200,93 @@ runtime/sessions/firecracker/<session_id>/
   events.jsonl
   metrics.log
   config/
-    machine-config.json
-    boot-source.json
-    rootfs-drive.json
-    vsock.json
 ```
 
-说明：
+重点文件：
 
-- `rootfs.ext4`：从基础 rootfs 复制出的每 session 私有根盘
-- `workspace.ext4`：当使用 `--workspace` 时生成的 host repo 只读镜像
-- `workspace-upper.ext4`：当使用 `--workspace` 时生成的 guest workspace 写层
-- `firecracker.sock`：Host 访问 Firecracker API 的 Unix socket
-- `firecracker.pid`：Firecracker 进程 PID
-- `firecracker.vsock`：预留给 Host/Guest `vsock` 通信的 Unix socket 路径
-- `console.log`：串口输出日志
-- `events.jsonl`：结构化生命周期 / exec 事件日志
-- `metrics.log`：当前仅预创建，后续用于 Firecracker metrics
-- `config/*.json`：启动时实际下发的配置快照
+- `rootfs.ext4`：每 session 私有根盘
+- `workspace.ext4`：只读工作区镜像
+- `workspace-upper.ext4`：可写 overlay 上层
+- `console.log`：guest 串口日志
+- `events.jsonl`：结构化事件日志
+- `config/*.json`：AIR 实际下发给 Firecracker 的配置快照
 
-当 session 带 `--workspace` 时，可导出当前工作区结果：
+## 6. 常见排障路径
 
-```bash
-air session export-workspace <session-id> /tmp/air-export
-air session export-workspace <session-id> /tmp/air-export --force
-```
+### 6.1 `firecracker binary not found`
 
 说明：
 
-- 导出的是当前 merged `/workspace` 视图，而不是原始只读 `workspace.ext4`
-- 默认要求输出目录为空或不存在
-- `--force` 会清空已有输出目录后再导出
-- 当前要求 session 仍处于运行中
-
-## 7. 真机生命周期验证
-
-仓库内已经提供一个默认跳过的集成测试，用于验证：
-
-- `Start()` 能启动 Firecracker
-- `Exec()` 能通过 `vsock` 真实执行命令
-- 每 session 独立 `rootfs.ext4` 生效
-- `air session export-workspace` 能导出当前 merged workspace
-- `Stop()` 能正常清理
-- 运行目录产物完整
-
-执行方式：
-
-```bash
-AIR_FIRECRACKER_INTEGRATION=1 \
-AIR_VM_RUNTIME=firecracker \
-AIR_FIRECRACKER_BIN=firecracker \
-AIR_FIRECRACKER_KERNEL=/path/to/vmlinux \
-AIR_FIRECRACKER_ROOTFS=/path/to/rootfs.ext4 \
-AIR_KVM_DEVICE=/dev/kvm \
-go test ./internal/vm -run TestFirecrackerIntegrationLifecycle -v
-```
-
-测试会在以下情况下直接跳过：
-
-- 不是 Linux
-- 未设置 `AIR_FIRECRACKER_INTEGRATION=1`
-- 未提供 kernel 或 rootfs
-
-## 8. 常见故障
-
-### 8.1 `firecracker binary not found`
-
-说明：
-
-- Firecracker 二进制不存在，或者不在 `PATH` 中
+- Firecracker 不在 `PATH`
+- 或 `AIR_FIRECRACKER_BIN` 指向错误
 
 处理：
 
-- 安装 Firecracker
-- 或显式设置 `AIR_FIRECRACKER_BIN`
+- 先跑 `air doctor --provider firecracker --human`
+- 检查二进制位置与执行权限
 
-### 8.2 `AIR_FIRECRACKER_KERNEL is required`
-
-说明：
-
-- 没有设置 kernel 镜像路径
-
-处理：
-
-- 设置 `AIR_FIRECRACKER_KERNEL=/path/to/vmlinux`
-
-### 8.3 `firecracker kernel image not found`
+### 6.2 `AIR_FIRECRACKER_KERNEL is required`
 
 说明：
 
-- 设置了路径，但文件不存在
+- 没有配置 kernel 资产
 
 处理：
 
-- 检查 kernel 文件路径
+- 按部署指南准备 `vmlinux`
 
-### 8.4 `AIR_FIRECRACKER_ROOTFS is required`
+### 6.3 `AIR_FIRECRACKER_ROOTFS is required`
 
 说明：
 
-- 没有设置 rootfs 镜像路径
+- 没有配置 rootfs 资产
 
 处理：
 
-- 设置 `AIR_FIRECRACKER_ROOTFS=/path/to/rootfs.ext4`
+- 按部署指南准备 `rootfs.ext4`
 
-### 8.5 `kvm device is unavailable for firecracker runtime`
+### 6.4 `kvm device is unavailable for firecracker runtime`
 
 说明：
 
-- `/dev/kvm` 不存在，或当前用户没有权限
+- `/dev/kvm` 不存在
+- 或当前用户没有权限
 
 处理：
 
-- 确认宿主机启用了 KVM
-- 确认当前用户具备 `/dev/kvm` 访问权限
-- 如有需要，调整 `AIR_KVM_DEVICE`
+- 回到部署指南检查 KVM 与权限
 
-### 8.6 `guest agent is not ready`
+### 6.5 `guest agent is not ready`
 
 说明：
 
-- 这是当前版本的预期行为之一
-- 表示 Firecracker VM 已进入启动链路，但 guest 内命令执行通道尚未完成
+- guest 启动了，但 `air-agent` 没有在预期时间内就绪
 
-处理：
+排查顺序：
 
-- 当前阶段仅验证 `create` / `delete` 生命周期
-- 不要将 `firecracker` provider 用于真实 `exec`
+1. 看 `console.log`
+2. 看 `events.jsonl`
+3. 看 `config/*.json` 是否指向了正确 rootfs / kernel / boot args
+4. 确认 rootfs 是否已通过仓库脚本注入 `air-agent`
 
-## 9. 状态文件
+## 7. 推荐验证顺序
 
-Session 元数据保存在：
+建议按下面顺序验证一台机器：
 
-```text
-data/sessions.json
-```
+1. `air run -- echo hello`
+2. `air session create --provider local`
+3. `air session exec` / `delete`
+4. `air init firecracker`
+5. `air doctor --provider firecracker --human`
+6. `air session create --provider firecracker`
+7. `air session exec`
+8. `air session console --follow`
+9. `air session export-workspace`
 
-其中包含：
+## 8. AI Agent 相关入口
 
-- session ID
-- VM ID
-- 状态
-- 创建时间
-- 最后使用时间
+如果要从 AI Agent 侧使用 AIR，继续看：
 
-如果只是想清空本地实验状态，可以删除：
-
-```text
-data/sessions.json
-runtime/sessions/
-```
-
-删除前需要先确认没有还在使用的 session。
-
-## 10. 推荐使用顺序
-
-当前建议按下面顺序使用仓库：
-
-1. 先用 `local` provider 验证 `create -> exec -> delete`
-2. 运行 `scripts/fetch-firecracker-demo-assets.sh`
-3. 运行 `scripts/prepare-firecracker-rootfs.sh`
-4. 切到 `firecracker` provider 验证 `create -> exec -> delete`
-5. 用 `console.log`、`config/*.json` 和集成测试确认 Firecracker 启动链路
+- [AI Agent 使用说明](ai-agent-usage.md)
+- [OpenClaude 接入方案](openclaude-integration.md)
+- [LLM 验收结果](llm-acceptance-results.md)

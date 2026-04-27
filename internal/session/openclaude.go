@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,9 +19,10 @@ import (
 )
 
 const (
-	defaultOpenClaudeCommand = "bun run scripts/start-grpc.ts"
-	defaultOpenClaudeHost    = "127.0.0.1"
-	defaultOpenClaudePort    = 50051
+	defaultOpenClaudeCommand      = "/usr/local/bin/bun run scripts/start-grpc.ts"
+	defaultOpenClaudeHost         = "127.0.0.1"
+	defaultOpenClaudePort         = 50051
+	defaultOpenClaudeReadyTimeout = 60 * time.Second
 )
 
 var ErrOpenClaudeNotConfigured = errors.New("openclaude is not configured for this session")
@@ -34,6 +36,8 @@ type OpenClaudeStartOptions struct {
 	Command       string
 	Host          string
 	Port          int
+	Env           map[string]string
+	WaitForReady  bool
 }
 
 type openClaudeMetadata struct {
@@ -41,6 +45,7 @@ type openClaudeMetadata struct {
 	Provider    string     `json:"provider"`
 	RepoPath    string     `json:"repo_path"`
 	Command     string     `json:"command"`
+	EnvKeys     []string   `json:"env_keys,omitempty"`
 	Host        string     `json:"host"`
 	Port        int        `json:"port"`
 	StateDir    string     `json:"state_dir"`
@@ -129,6 +134,7 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 		Provider:  inspect.Session.Provider,
 		RepoPath:  repoPath,
 		Command:   opts.Command,
+		EnvKeys:   sortedEnvKeys(opts.Env),
 		Host:      opts.Host,
 		Port:      opts.Port,
 		StateDir:  openClaudeStateDirForProvider(inspect.Session.Provider, repoPath, sessionID),
@@ -137,7 +143,7 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 	meta.PIDPath = path.Join(meta.StateDir, "server.pid")
 	meta.LogPath = path.Join(meta.StateDir, "server.log")
 
-	result, err := m.Exec(sessionID, renderOpenClaudeStartCommand(meta))
+	result, err := m.Exec(sessionID, renderOpenClaudeStartCommand(meta, opts.Env))
 	if err != nil {
 		return nil, err
 	}
@@ -157,12 +163,58 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 		return nil, err
 	}
 
+	if opts.WaitForReady {
+		if err := m.waitForOpenClaudeReady(sessionID, meta.Host, meta.Port, defaultOpenClaudeReadyTimeout); err != nil {
+			return nil, fmt.Errorf("openclaude did not become ready: %w (log: %s)", err, meta.LogPath)
+		}
+	}
+
 	status := openClaudeStatusFromMetadata(inspect, meta)
 	status.PID = pid
 	status.Running = true
 	status.CreatedSession = createdSession
 	status.LastCheckedAt = meta.LastChecked
 	return status, nil
+}
+
+func (m *Manager) waitForOpenClaudeReady(sessionID, host string, port int, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = defaultOpenClaudeReadyTimeout
+	}
+
+	sessionModel, err := m.store.Get(sessionID)
+	if err != nil {
+		return err
+	}
+	if err := m.ensureProvider(sessionModel); err != nil {
+		return err
+	}
+
+	runtime, err := m.runtimeForSession(sessionModel)
+	if err != nil {
+		return err
+	}
+	dialer, ok := runtime.(vm.TCPDialer)
+	if !ok {
+		return errors.New("session provider does not support tcp dialing")
+	}
+
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, err := dialer.DialTCP(sessionID, address, 2*time.Second)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+		time.Sleep(250 * time.Millisecond)
+	}
+	if lastErr == nil {
+		lastErr = os.ErrDeadlineExceeded
+	}
+	return lastErr
 }
 
 func (m *Manager) OpenClaudeStatus(sessionID string) (*OpenClaudeStatus, error) {
@@ -359,6 +411,12 @@ func normalizeOpenClaudeStartOptions(opts OpenClaudeStartOptions) OpenClaudeStar
 	if opts.GuestRepoPath == "" {
 		opts.GuestRepoPath = os.Getenv("AIR_OPENCLAUDE_GUEST_REPO")
 	}
+	if opts.Env == nil {
+		opts.Env = collectOpenClaudeProviderEnv(os.Environ())
+	}
+	if !opts.WaitForReady {
+		opts.WaitForReady = opts.Provider == "firecracker"
+	}
 	return opts
 }
 
@@ -443,19 +501,75 @@ func writeOpenClaudeMetadata(metadataPath string, meta *openClaudeMetadata) erro
 	return os.WriteFile(metadataPath, body, 0o644)
 }
 
-func renderOpenClaudeStartCommand(meta *openClaudeMetadata) string {
+func renderOpenClaudeStartCommand(meta *openClaudeMetadata, env map[string]string) string {
+	configHome := path.Join(meta.StateDir, "home")
+	configDir := path.Join(configHome, ".openclaude")
+	envParts := []string{
+		"GRPC_HOST=" + shellQuote(meta.Host),
+		"GRPC_PORT=" + shellQuote(strconv.Itoa(meta.Port)),
+		"AIR_OPENCLAUDE_SESSION_ID=" + shellQuote(meta.SessionID),
+		"HOME=" + shellQuote(configHome),
+		"CLAUDE_CONFIG_DIR=" + shellQuote(configDir),
+	}
+	for _, key := range sortedEnvKeys(env) {
+		envParts = append(envParts, key+"="+shellQuote(env[key]))
+	}
 	return strings.Join([]string{
 		"mkdir -p " + shellQuote(meta.StateDir),
+		"mkdir -p " + shellQuote(configDir),
 		"cd " + shellQuote(meta.RepoPath),
-		"nohup env GRPC_HOST=" + shellQuote(meta.Host) +
-			" GRPC_PORT=" + shellQuote(strconv.Itoa(meta.Port)) +
-			" AIR_OPENCLAUDE_SESSION_ID=" + shellQuote(meta.SessionID) +
+		"nohup env " + strings.Join(envParts, " ") +
 			" sh -c " + shellQuote(meta.Command) +
 			" >> " + shellQuote(meta.LogPath) + " 2>&1 < /dev/null & pid=$!",
 		"mkdir -p " + shellQuote(meta.StateDir),
 		"printf '%s\\n' \"$pid\" > " + shellQuote(meta.PIDPath),
 		"printf '%s\\n' \"$pid\"",
 	}, " && ")
+}
+
+func collectOpenClaudeProviderEnv(environ []string) map[string]string {
+	allowed := map[string]struct{}{
+		"CLAUDE_CODE_USE_OPENAI": {},
+		"CLAUDE_CODE_USE_GEMINI": {},
+		"OPENAI_API_KEY":         {},
+		"OPENAI_BASE_URL":        {},
+		"OPENAI_MODEL":           {},
+		"DEEPSEEK_API_KEY":       {},
+		"DEEPSEEK_BASE_URL":      {},
+		"DEEPSEEK_MODEL":         {},
+		"GEMINI_API_KEY":         {},
+		"GOOGLE_API_KEY":         {},
+		"GEMINI_BASE_URL":        {},
+		"GEMINI_MODEL":           {},
+		"GEMINI_AUTH_MODE":       {},
+		"ANTHROPIC_API_KEY":      {},
+		"ANTHROPIC_BASE_URL":     {},
+		"ANTHROPIC_MODEL":        {},
+		"HTTP_PROXY":             {},
+		"HTTPS_PROXY":            {},
+		"ALL_PROXY":              {},
+		"NO_PROXY":               {},
+	}
+	out := make(map[string]string)
+	for _, item := range environ {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		if _, allow := allowed[key]; allow && value != "" {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func sortedEnvKeys(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func renderOpenClaudeStatusCommand(pidPath string) string {

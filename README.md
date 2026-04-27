@@ -2,376 +2,322 @@
 
 [中文](#中文简介) | [English](#english)
 
-**AIR (Agent Isolation Runtime)** is an open-source runtime for executing untrusted AI-generated code inside isolated lightweight VMs.
+AIR (Agent Isolation Runtime) is an open-source runtime for executing AI-agent work inside isolated lightweight VMs.
 
-> AI-generated code should not run in the host environment by default.
-
-AIR is designed for coding agents, sandboxed tools, and automated development workflows that need a stronger execution boundary than shared-kernel containers.
+The product goal is not “run code somehow”. The product goal is to give coding agents a safer default execution boundary, while still preserving the core repo-task loop: read files, execute commands, modify code, inspect logs, and continue.
 
 ## English
 
 ### What AIR Is
 
-AIR provides a VM-based execution boundary for untrusted code. The project is focused on building a safe, disposable, reproducible runtime for AI agents that generate and execute code autonomously.
+AIR provides a VM-backed execution boundary for agent workflows that should not run directly on the host by default.
+
+Today AIR already supports:
+
+- one-shot execution through `air run`
+- stateful sessions through `air session ...`
+- `local` and `firecracker` runtime providers
+- guest execution over `vsock`
+- Firecracker console, events, and runtime inspection
+- workspace injection and merged workspace export
+- OpenClaude process management inside AIR sessions
+- host-to-guest OpenClaude TCP forwarding for Firecracker sessions
+- real LLM acceptance workflows for the reference agent
 
 ### Why AIR
 
-Modern AI agents do more than generate code. They write, execute, iterate, and return results. That changes the infrastructure requirement:
+Modern coding agents do more than generate text. They inspect repositories, run commands, modify files, rerun tests, and keep iterating. That changes the runtime requirement:
 
-- The code is often untrusted
-- The environment should be disposable
-- Resource access should be controlled
-- State should be reproducible when needed
+- the executed code is often untrusted
+- the execution environment should be disposable
+- resource access should be explicit and constrained
+- task state and artifacts should be inspectable
+- the host should not be the default blast radius
 
-### Core Goals
-
-- Run untrusted code inside an isolated VM
-- Support both one-shot tasks and stateful sessions
-- Disable network access by default
-- Enforce CPU, memory, and timeout limits
-- Evolve toward `overlay + snapshot + fast restore`
-
-### Product Direction
+### Current Product Shape
 
 #### 1. One-shot execution
 
 ```bash
-air run hello.py
+air run -- echo hello
+air run --provider firecracker --timeout 30s --workspace /path/to/repo -- make test
 ```
 
-```text
-Create VM -> Load environment -> Execute -> Return output -> Destroy VM
+#### 2. Stateful sessions
+
+```bash
+air session create --provider firecracker --workspace /path/to/repo
+air session list
+air session inspect <id>
+air session console <id> --follow
+air session events <id> --follow
+air session exec <id> "pwd && ls"
+air session export-workspace <id> ./out --force
+air session delete <id>
 ```
 
-#### 2. Stateful session execution
+#### 3. Firecracker environment setup
 
 ```bash
 air init firecracker
 air doctor --provider firecracker --human
-air session create
-air session create --provider local
-air session create --provider firecracker
-air session list
-air session inspect <id>
-air session console <id> --follow
-air session exec <id> "echo hello > a.txt"
-air session exec <id> "cat a.txt"
-air session delete <id>
 ```
+
+#### 4. OpenClaude inside AIR
+
+```bash
+air agent openclaude start --provider firecracker --guest-repo /opt/openclaude
+air agent openclaude status <session-id>
+air agent openclaude forward <session-id> --listen 127.0.0.1:50052
+air agent openclaude stop <session-id>
+```
+
+### Current Firecracker Architecture
 
 ```text
-Create VM -> Keep state -> Execute multiple commands -> Destroy session
+CLI
+  |
+  v
+Session Manager
+  |
+  +-- local runtime
+  +-- firecracker runtime
+          |
+          +-- Firecracker VM
+          +-- guest air-agent over vsock
+          +-- rootfs.ext4 (session-private)
+          +-- workspace.ext4 (read-only lower)
+          +-- workspace-upper.ext4 (writable upper)
+          +-- events / console / metrics / config artifacts
 ```
 
-### Architecture Overview
+### Current OpenClaude Path
 
-```text
-CLI / HTTP API
-      |
-      v
-Orchestrator
-      |
-      +-- Session Manager
-      +-- VM Manager
-      +-- Isolation Controller
-      +-- Snapshot Engine
-      |
-      v
-Hypervisor + Guest Agent + Rootfs
+The current OpenClaude integration path is:
+
+- run the OpenClaude gRPC server inside an AIR session or Firecracker guest
+- keep OpenClaude installed in the guest at `/opt/openclaude`
+- run repo tasks against `/workspace`
+- expose the guest OpenClaude TCP endpoint on the host with `air agent openclaude forward`
+
+The real Firecracker acceptance path is now implemented and validated through:
+
+```bash
+scripts/run-openclaude-firecracker-acceptance.sh
 ```
 
-### Roadmap
+That workflow now covers:
 
-#### Phase 1: MVP
-- `air session create`
-- `air session exec`
-- `air session delete`
-- Local JSON state store
-- File-based Host/Guest communication
-- Single-node runtime
+- guest startup
+- OpenClaude start and readiness
+- host forwarding
+- real model task execution
+- workspace export and output verification
 
-#### Phase 2: Engineering baseline
-- Guest agent
-- `virtio-serial` or `vsock`
-- HTTP API
-- `base image + overlay`
-- Timeout, GC, logging
+### Firecracker Asset Strategy
 
-#### Phase 3: Performance and platform
-- Snapshot / restore
-- Warm VM pool
-- Streaming output
-- Network whitelist mode
-- Metrics and observability
+The current recommended asset strategy is:
+
+- Firecracker binary: official Firecracker release
+- kernel and demo rootfs baseline: official Firecracker demo assets
+- AIR guest agent injection: `scripts/prepare-firecracker-rootfs.sh`
+- OpenClaude guest image: `scripts/prepare-openclaude-alpine-rootfs.sh`
+
+If you installed AIR from `.deb`, the package contains the CLI, but not the Firecracker binary, kernel, or rootfs assets. Run:
+
+```bash
+air init firecracker
+air doctor --provider firecracker --human
+```
+
+### What Is Already Done
+
+- Firecracker host-side lifecycle and runtime artifacts
+- guest execution over `vsock`
+- one-shot `air run`
+- session inspection, console, events, and debugging paths
+- workspace overlay mount inside the guest
+- merged workspace export
+- OpenAI and DeepSeek planner adapters in the reference agent
+- gated real-LLM acceptance workflows in GitHub Actions
+- `.deb`, release archive, and apt-style packaging output
+- OpenClaude guest startup, forwarding, and real Firecracker acceptance path
+
+### What Is Still Next
+
+The next major product work is no longer “build a basic MVP”. The next work is product hardening:
+
+- stabilize and extend the Firecracker guest networking and policy surface
+- improve image lifecycle, cleanup, and reproducibility
+- add snapshot / fast restore / startup performance work
+- keep tightening the agent-facing workflow and packaging quality
 
 ### Documentation
 
 - [Documentation Index](docs/README.en.md) / [文档索引](docs/README.md)
-- [Project Plan](docs/project-plan.md)
-- [Product Requirement Document](docs/prd.md)
-- [Technical Architecture](docs/technical-architecture.md)
-- [API Design](docs/api-design.md)
-- [Data Model](docs/data-model.md)
-- [Virtualization Selection](docs/virtualization-selection.md)
-- [VM Runtime Design](docs/vm-runtime-design.md)
-- [AI Agent Selection](docs/agent-selection.md)
-- [Using AIR From AI Agents](docs/ai-agent-usage.md)
-- [Release And Distribution](docs/release-distribution.md)
-- [Firecracker Deployment Guide](docs/firecracker-deployment-guide.md)
-- [Operations Manual](docs/operations-manual.md)
-- [OpenClaude Integration](docs/openclaude-integration.en.md)
+- [Using AIR From AI Agents](docs/ai-agent-usage.en.md) / [中文](docs/ai-agent-usage.md)
+- [Firecracker Deployment Guide](docs/firecracker-deployment-guide.en.md) / [中文](docs/firecracker-deployment-guide.md)
+- [Operations Manual](docs/operations-manual.en.md) / [中文](docs/operations-manual.md)
+- [Rootfs Management Architecture](docs/rootfs-management-architecture.en.md) / [中文](docs/rootfs-management-architecture.md)
+- [OpenClaude Integration](docs/openclaude-integration.en.md) / [中文](docs/openclaude-integration.md)
+- [Release And Distribution](docs/release-distribution.en.md) / [中文](docs/release-distribution.md)
+- [Roadmap](ROADMAP.md) / [中文](ROADMAP.zh-CN.md)
 - [Repository Guidelines](AGENTS.md)
-- [Roadmap](ROADMAP.md)
-- [Contributing Guide](CONTRIBUTING.md)
-
-### Community
-
-We want AIR to be built in the open. Contributions are welcome across:
-
-- VM-based AI sandboxing
-- Agent runtime design
-- Guest/Host communication
-- Snapshot and fast restore
-- Go control plane services
-- Documentation and developer experience
+- [Contributing Guide](CONTRIBUTING.md) / [中文](CONTRIBUTING.zh-CN.md)
 
 ## 中文简介
 
 ### AIR 是什么
 
-AIR（Agent Isolation Runtime）是一个面向 AI Agent 的开源隔离运行时，用轻量虚拟机而不是共享内核容器来执行不可信代码。
+AIR（Agent Isolation Runtime）是一个面向 AI Agent 的开源隔离运行时，用轻量虚拟机而不是共享内核容器来承载 agent 的真实执行流程。
 
-它解决的不是“怎么运行代码”，而是“怎么安全地运行 AI 生成的代码”。
+它解决的不是“怎么运行代码”，而是“怎么让 coding agent 在默认更安全的边界里运行，同时还能保住读文件、改代码、跑测试、看日志、继续迭代这些核心闭环”。
 
 ### 为什么要做 AIR
 
-AI Agent 已经不只是生成代码，而是开始自己执行代码、修改文件、跑测试、返回结果。这意味着底层基础设施必须变化：
+现代 coding agent 已经不只是输出文本，而是在真实仓库里：
+
+- 读文件
+- 执行命令
+- 修改代码
+- 重跑测试
+- 根据结果继续下一步
+
+这意味着底层运行时必须变化：
 
 - 执行代码默认不可信
-- 执行环境需要可销毁
-- 资源访问需要被限制
-- 执行状态需要可复现
+- 环境需要可销毁
+- 资源访问需要显式受限
+- 状态与产物需要可检查
+- 宿主机不该成为默认爆炸半径
 
-### 核心目标
-
-- 在独立 VM 中执行不可信代码
-- 同时支持一次性执行和有状态 Session
-- 默认关闭网络
-- 支持 CPU、内存、超时限制
-- 后续演进到 `overlay + snapshot + fast restore`
-
-### 产品方向
+### 当前产品形态
 
 #### 1. 一次性执行
 
 ```bash
-air run hello.py
-```
-
-```text
-创建 VM -> 加载环境 -> 执行 -> 返回结果 -> 销毁 VM
+air run -- echo hello
+air run --provider firecracker --timeout 30s --workspace /path/to/repo -- make test
 ```
 
 #### 2. 有状态 Session
 
 ```bash
-air session create
-air session create --provider local
-air session create --provider firecracker
+air session create --provider firecracker --workspace /path/to/repo
 air session list
 air session inspect <id>
 air session console <id> --follow
-air session exec <id> "echo hello > a.txt"
-air session exec <id> "cat a.txt"
+air session events <id> --follow
+air session exec <id> "pwd && ls"
+air session export-workspace <id> ./out --force
 air session delete <id>
 ```
 
-```text
-创建 VM -> 保留状态 -> 多次执行 -> 销毁 Session
-```
-
-### 技术架构概览
-
-```text
-CLI / HTTP API
-      |
-      v
-Orchestrator
-      |
-      +-- Session Manager
-      +-- VM Manager
-      +-- Isolation Controller
-      +-- Snapshot Engine
-      |
-      v
-Hypervisor + Guest Agent + Rootfs
-```
-
-### 路线图
-
-#### 第一阶段：MVP
-- `air session create`
-- `air session exec`
-- `air session delete`
-- 本地 JSON 状态存储
-- Host/Guest 文件通信
-- 单机运行时
-
-#### 第二阶段：工程化基础
-- Guest Agent
-- `virtio-serial` 或 `vsock`
-- HTTP API
-- `base image + overlay`
-- timeout、GC、日志
-
-#### 第三阶段：性能与平台能力
-- Snapshot / Restore
-- 预热 VM 池
-- 流式输出
-- 白名单网络模式
-- 指标与可观测性
-
-### 文档
-
-- [文档索引](docs/README.md) / [Documentation Index](docs/README.en.md)
-- [项目计划](docs/project-plan.md)
-- [产品说明书](docs/prd.md)
-- [技术架构](docs/technical-architecture.md)
-- [接口设计](docs/api-design.md)
-- [数据模型](docs/data-model.md)
-- [虚拟化技术选型](docs/virtualization-selection.md)
-- [VM Runtime 设计](docs/vm-runtime-design.md)
-- [AI Agent 选型](docs/agent-selection.md)
-- [通过 AI Agent 使用 AIR](docs/ai-agent-usage.md)
-- [发布与安装包交付](docs/release-distribution.md)
-- [Firecracker 真机部署指南](docs/firecracker-deployment-guide.md)
-- [操作手册](docs/operations-manual.md)
-- [OpenClaude 接入方案](docs/openclaude-integration.md)
-- [仓库协作指南](AGENTS.md)
-- [项目路线图](ROADMAP.md)
-- [贡献指南](CONTRIBUTING.md)
-
-如果你是通过 `.deb` 安装 AIR，需要注意当前安装包只包含 CLI，不包含 Firecracker 二进制、`vmlinux`、`rootfs.ext4`。要启用 `firecracker` provider，先执行：
+#### 3. Firecracker 环境准备
 
 ```bash
 air init firecracker
 air doctor --provider firecracker --human
 ```
 
-`air init firecracker` 会交互询问你是下载 AIR 官方镜像包，还是自己部署 Firecracker 资产。
+#### 4. 在 AIR 中运行 OpenClaude
 
-### 社区建设
+```bash
+air agent openclaude start --provider firecracker --guest-repo /opt/openclaude
+air agent openclaude status <session-id>
+air agent openclaude forward <session-id> --listen 127.0.0.1:50052
+air agent openclaude stop <session-id>
+```
 
-AIR 的目标是面向社区持续建设。欢迎以下方向的开发者加入：
+### 当前 Firecracker 架构
 
-- 虚拟化与 VM 管理
-- Guest / Host 通信
-- Go 控制面与 API
-- Snapshot 与快速恢复
-- AI 安全执行基础设施
-- 文档、示例和开发者体验
+```text
+CLI
+  |
+  v
+Session Manager
+  |
+  +-- local runtime
+  +-- firecracker runtime
+          |
+          +-- Firecracker VM
+          +-- guest air-agent over vsock
+          +-- rootfs.ext4（session 私有）
+          +-- workspace.ext4（只读 lower）
+          +-- workspace-upper.ext4（可写 upper）
+          +-- events / console / metrics / config 等运行产物
+```
 
-## Status
+### 当前 OpenClaude 路径
 
-AIR is in the early design and bootstrap stage. The current focus is turning the architecture into a working open-source MVP.
+当前 OpenClaude 接入路径是：
 
-Current implementation note:
+- 把 OpenClaude gRPC server 跑在 AIR session / Firecracker guest 内
+- guest 内程序目录固定在 `/opt/openclaude`
+- repo 任务工作目录固定面向 `/workspace`
+- 通过 `air agent openclaude forward` 把 guest 内 OpenClaude TCP endpoint 暴露到 host
 
-- Phase 1 has started with a minimal Go CLI skeleton
-- `air run` and `session create / exec / delete` are now available as the first executable workflow
-- The `vm` layer now supports a configurable provider with `local` as the default and `firecracker` as the experimental VM-backed path
-- Firecracker bootstrapping, guest `air-agent`, and host/guest `vsock exec` are wired end to end
-- Firecracker now uses a per-session writable rootfs image copied from the configured base rootfs
-- `air session list` / `inspect` / `console` / `events` are available for basic debugging
-- `air run` supports `--provider`, `--timeout`, `--memory-mib`, `--vcpu-count`, and structured JSON output for agent consumption
-- `examples/agent-runner` now supports OpenAI and DeepSeek planners, with `scripted` as an offline fallback
-- `docs/agent-selection.md` now records the first external LLM integration decision and environment template
-- `scripts/prepare-firecracker-rootfs.sh` rebuilds the demo rootfs with `air-agent` baked in and enabled through OpenRC `local.d`
-- Release packaging now supports GitHub Release archives, `.deb` packages, and an initial apt repository directory bundle
+真实 Firecracker 验收链路已经实现并验证，入口是：
 
-Distribution:
+```bash
+scripts/run-openclaude-firecracker-acceptance.sh
+```
 
-- Build release artifacts locally with `./scripts/build-release-artifacts.sh dist`
-- The repository includes a GitHub Actions workflow at `.github/workflows/release.yml`
-- Packaging details are documented in `docs/release-distribution.md`
-- The current `.deb` package contains only `air` and `air-agent`; Firecracker runtime assets must be installed separately
-- Official releases now also publish `air_firecracker_linux_<arch>.tar.gz` for `air init firecracker`
+这条链路当前已经覆盖：
 
-Runtime configuration:
+- guest 启动
+- OpenClaude 启动与探活
+- host 侧 forward
+- 真实模型任务执行
+- workspace 导出与结果校验
 
-- `AIR_VM_RUNTIME`: choose `local` or `firecracker`
-- `AIR_FIRECRACKER_BIN`: Firecracker binary path, default `firecracker`
-- `AIR_FIRECRACKER_KERNEL`: kernel image path required by the `firecracker` provider
-- `AIR_FIRECRACKER_ROOTFS`: rootfs image path required by the `firecracker` provider
-- `AIR_KVM_DEVICE`: KVM device path, default `/dev/kvm`
+### Firecracker 资产策略
 
-Startup shortcut:
+当前推荐资产策略是：
 
-- After running `scripts/fetch-firecracker-demo-assets.sh` and `scripts/prepare-firecracker-rootfs.sh`, you can usually start the Firecracker provider from the repository root with only `AIR_VM_RUNTIME=firecracker`
-- If `assets/firecracker/firecracker`, `assets/firecracker/hello-vmlinux.bin`, and `assets/firecracker/hello-rootfs-air.ext4` exist, AIR will auto-discover them
-- AIR also auto-discovers the same files under `/usr/lib/air/firecracker` and `/usr/local/lib/air/firecracker`
-- You can also bypass the default provider and create a session explicitly with `air session create --provider firecracker`
+- Firecracker 二进制：官方 release
+- kernel / demo rootfs 基线：官方 demo 资产
+- AIR guest agent 注入：`scripts/prepare-firecracker-rootfs.sh`
+- OpenClaude guest 镜像：`scripts/prepare-openclaude-alpine-rootfs.sh`
 
-Firecracker runtime layout:
+如果你是通过 `.deb` 安装 AIR，需要注意安装包只包含 CLI，不包含 Firecracker 二进制、kernel 或 rootfs 资产。启用 `firecracker` provider 前先执行：
 
-- `runtime/sessions/firecracker/<session_id>/rootfs.ext4`
-- `runtime/sessions/firecracker/<session_id>/workspace.ext4` when `--workspace` is used
-- `runtime/sessions/firecracker/<session_id>/workspace-upper.ext4` when `--workspace` is used
-- `runtime/sessions/firecracker/<session_id>/firecracker.sock`
-- `runtime/sessions/firecracker/<session_id>/firecracker.pid`
-- `runtime/sessions/firecracker/<session_id>/console.log`
-- `runtime/sessions/firecracker/<session_id>/events.jsonl`
-- `runtime/sessions/firecracker/<session_id>/metrics.log`
-- `runtime/sessions/firecracker/<session_id>/firecracker.vsock`
-- `runtime/sessions/firecracker/<session_id>/config/*.json`
+```bash
+air init firecracker
+air doctor --provider firecracker --human
+```
 
-Real-environment lifecycle test:
+### 当前已经完成
 
-- `AIR_FIRECRACKER_INTEGRATION=1 go test ./internal/vm -run TestFirecrackerIntegrationLifecycle`
-- The test validates `start -> exec -> stop`, non-empty console output, and per-session rootfs wiring
-- The test is skipped unless Linux, `/dev/kvm`, Firecracker, kernel, and rootfs are all available
+- Firecracker host 侧生命周期与运行产物管理
+- 基于 `vsock` 的 guest 执行
+- 一次性入口 `air run`
+- session inspect / console / events 等调试路径
+- guest 内 workspace overlay 挂载
+- merged workspace 导出
+- reference agent 的 OpenAI / DeepSeek planner
+- GitHub Actions 中的 gated 真实 LLM 验收链路
+- `.deb`、release archive、apt 风格目录产物
+- OpenClaude 的 guest 启动、host forward 与 Firecracker 真机验收链路
 
-Debugging commands:
+### 当前下一步
 
-- `air init firecracker`
-- `air doctor --provider firecracker --human`
-- `air run [--provider ...] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] -- <command>`
-- `go run ./examples/agent-runner --task all`
-- `go run ./examples/agent-runner --planner deepseek --model deepseek-chat --task all`
-- `go run ./examples/agent-runner --planner scripted --task all`
-- `air session list`
-- `air session inspect <id>`
-- `air session console <id> [--tail=N]`
-- `air session console <id> --follow [--tail=N]`
-- `air session events <id> [--tail=N]`
-- `air session events <id> --follow [--tail=N]`
-- `air session export-workspace <id> <output-dir> [--force]`
-- `air agent openclaude start --repo ~/Documents/code/openclaude`
-- `air agent openclaude start --provider firecracker --workspace ~/Documents/code/my-repo`
-- `air agent openclaude status <session-id>`
-- `air agent openclaude stop <session-id>`
-- `air agent openclaude forward <session-id> [--listen 127.0.0.1:50052]`
-- `air session create --provider firecracker --workspace ~/Documents/code/my-repo`
-- `scripts/prepare-openclaude-firecracker-rootfs.sh assets/firecracker/hello-rootfs-air.ext4 assets/firecracker/hello-rootfs-openclaude.ext4 ~/Documents/code/openclaude ~/.bun/bin/bun`
-- `scripts/prepare-openclaude-alpine-rootfs.sh assets/firecracker/openclaude-alpine-rootfs.ext4 ~/Documents/code/openclaude`
+当前下一阶段已经不再是“先做一个最小 MVP”，而是产品化加固：
 
-Current console limitation:
+- 继续增强 Firecracker guest 网络与策略能力
+- 改进镜像生命周期、清理与可复现性
+- 增加 snapshot / fast restore / 启动性能优化
+- 持续补强面向 agent 的工作流与发布质量
 
-- `air session console` currently shows the serial console log file
-- `air session events` shows structured lifecycle / exec events including `request_id` and duration
-- It is useful for boot diagnostics, but it is not an interactive guest shell yet
+### 文档
 
-Current status behavior:
-
-- `air session list` and `air session inspect` refresh session status from the runtime before printing
-- If the runtime directory still exists but the VM process has exited, the session status is reported as `stopped`
-- `air agent openclaude` manages a long-running OpenClaude-compatible process per session and persists metadata in the session runtime directory
-- `air agent openclaude forward` exposes the session's OpenClaude TCP endpoint on a host-side local port, which is the bridge path for Firecracker-backed sessions
-- `air session create --workspace` and `air run --workspace` can now build a read-only `workspace.ext4` plus a writable `workspace-upper.ext4` for Firecracker sessions
-- when a Firecracker session has a workspace image, the guest mounts `/workspace` via overlayfs and guest commands default to `/workspace`
-- the `/workspace` overlayfs flow has been validated on a real Firecracker guest; host source files remain unchanged after guest writes
-- `air session export-workspace <id> <output-dir>` now exports the current merged workspace view from a running session
-- Firecracker sessions now start a host-side HTTP CONNECT egress relay; prepared guest images expose it as `HTTP_PROXY` / `HTTPS_PROXY` at `127.0.0.1:18080`
-- `scripts/prepare-openclaude-firecracker-rootfs.sh` prepares a Firecracker guest image with Bun and OpenClaude baked in at `/opt/openclaude`
-- `scripts/prepare-openclaude-alpine-rootfs.sh` prepares a newer Alpine-based guest image for Bun/OpenClaude; this is the recommended Firecracker path for OpenClaude workloads
-- `AIR_FIRECRACKER_BOOT_ARGS` can override the Firecracker kernel command line when a guest image needs a different init or boot setup
+- [文档索引](docs/README.md) / [Documentation Index](docs/README.en.md)
+- [AI Agent 使用说明](docs/ai-agent-usage.md) / [English](docs/ai-agent-usage.en.md)
+- [Firecracker 真机部署指南](docs/firecracker-deployment-guide.md) / [English](docs/firecracker-deployment-guide.en.md)
+- [操作手册](docs/operations-manual.md) / [English](docs/operations-manual.en.md)
+- [根文件系统管理架构](docs/rootfs-management-architecture.md) / [English](docs/rootfs-management-architecture.en.md)
+- [OpenClaude 接入方案](docs/openclaude-integration.md) / [English](docs/openclaude-integration.en.md)
+- [发布与安装包交付](docs/release-distribution.md) / [English](docs/release-distribution.en.md)
+- [路线图](ROADMAP.zh-CN.md) / [English](ROADMAP.md)
+- [仓库协作指南](AGENTS.md)
+- [贡献指南](CONTRIBUTING.zh-CN.md) / [English](CONTRIBUTING.md)

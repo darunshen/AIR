@@ -4,80 +4,87 @@
 
 ## Vision
 
-Build an open-source runtime that gives AI agents a safer default execution boundary through lightweight VM isolation.
+Build an open-source runtime that gives coding agents a safer default execution boundary through lightweight VM isolation, while preserving the practical repo-task loop those agents need.
 
-## Phase 1: MVP
+## Current Baseline
 
-Target: a minimal local runtime that proves the session model works.
+AIR is already past the “can we build a minimal session MVP” stage.
 
-Scope:
+The current baseline already includes:
 
-- `air session create`
-- `air session exec`
-- `air session delete`
-- local `sessions.json`
-- single-node runtime
-- file-based Host/Guest communication
-- default no-network mode
+- `air run`
+- stateful sessions
+- `local` and `firecracker` providers
+- guest execution over `vsock`
+- Firecracker runtime artifacts and debugging paths
+- workspace injection and export
+- OpenAI / DeepSeek reference-agent integrations
+- OpenClaude startup and forwarding inside Firecracker guests
+- real acceptance workflows for LLM-driven and OpenClaude-driven paths
 
-Success criteria:
+## Next Stage: Runtime Hardening
 
-- session can be created
-- commands can be executed in the same VM
-- file state persists across `exec`
-- session can be deleted cleanly
+Target: make the current workflow more reliable, inspectable, and production-friendly.
 
-## Phase 2: Engineering Baseline
+Focus:
 
-Target: turn the MVP into a stable developer-facing foundation.
-
-Scope:
-
-- Firecracker runtime integration
-- guest agent inside VM
-- `virtio-vsock`
-- HTTP API
-- `base image + overlay`
-- timeout handling
-- session GC
-- structured logs
+- stabilize Firecracker guest networking and policy controls
+- improve cleanup and lifecycle guarantees
+- tighten host/guest error classification and recovery behavior
+- continue strengthening OpenClaude and agent-facing workflow reliability
+- improve release packaging and installation UX
 
 Success criteria:
 
-- communication is more reliable than file polling
-- session lifecycle is observable
-- host and guest boundaries are cleaner
+- Firecracker-backed agent workflows fail less often and fail more clearly
+- guest runtime artifacts are easier to inspect and support
+- deployment and installation paths are predictable
 
-## Phase 3: Performance and Platform
+## Following Stage: Image And State System
 
-Target: reduce cold start cost and improve runtime usability.
+Target: improve reproducibility and reduce operational friction in guest image management.
 
-Scope:
+Focus:
+
+- image lifecycle management
+- clearer rootfs / workspace layering contracts
+- reproducible prepared guest images
+- cleanup and reclaim of runtime artifacts
+- stronger storage architecture documentation and tooling
+
+Success criteria:
+
+- prepared guest images are easier to rebuild and reason about
+- runtime state is easier to reclaim safely
+- rootfs and workspace behavior are easier for users to understand
+
+## Later Stage: Performance
+
+Target: reduce cold-start cost and improve repeat-task ergonomics.
+
+Focus:
 
 - snapshot / restore
-- warm VM pool
-- streaming output
-- network whitelist mode
-- metrics and observability
+- faster guest startup
+- warm pools or similar reuse strategies
+- streaming and long-running task UX improvements
 
 Success criteria:
 
-- startup latency is significantly reduced
-- long-running tasks have better UX
-- operational visibility is available
+- lower startup latency
+- better operator experience for repeated agent workflows
 
-## Phase 4: Community and Ecosystem
+## Ecosystem And Community
 
-Target: make AIR usable and attractive for external developers.
+Target: make AIR easier to adopt externally.
 
-Scope:
+Focus:
 
-- examples and demos
-- starter issues
-- public architecture discussions
+- better examples and tutorials
 - contributor onboarding
-- benchmark and comparison material
+- public architecture guidance
+- clearer packaging and release expectations
 
 ## Current Priority
 
-The immediate priority is Phase 1: get a working session-based MVP into the repository.
+The immediate priority is not rebuilding a basic MVP. The immediate priority is hardening the already working AI-agent workflow so that Firecracker-backed real-world usage becomes more stable and easier to operate.

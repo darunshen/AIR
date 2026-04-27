@@ -1,5 +1,6 @@
 .codex
 runtime/
+artifacts/
 air
 *.test
 *.test.exe

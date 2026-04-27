@@ -4,68 +4,87 @@
 
 ## 愿景
 
-通过轻量虚拟机隔离，为 AI Agent 提供更安全的默认执行边界。
+通过轻量虚拟机隔离，为 coding agent 提供更安全的默认执行边界，同时保住它们真实需要的 repo 任务闭环。
 
-## 第一阶段：MVP
+## 当前基线
 
-目标：交付一个最小可运行的本地 session runtime。
+AIR 已经不再处于“能不能先做一个最小 session MVP”的阶段。
 
-范围：
+当前基线已经包含：
 
-- `air session create`
-- `air session exec`
-- `air session delete`
-- 本地 `sessions.json`
-- 单机运行时
-- Host/Guest 文件通信
-- 默认无网络
+- `air run`
+- 有状态 session
+- `local` 与 `firecracker` provider
+- 基于 `vsock` 的 guest 执行
+- Firecracker 运行产物与调试路径
+- workspace 注入与导出
+- OpenAI / DeepSeek reference agent 接入
+- Firecracker guest 内 OpenClaude 启动与 forward
+- LLM 驱动与 OpenClaude 驱动链路的真实验收工作流
+
+## 下一阶段：运行时加固
+
+目标：让当前工作流更稳定、更可观察、更接近生产可用。
+
+重点：
+
+- 稳定 Firecracker guest 网络与策略能力
+- 改进清理与生命周期保证
+- 继续细化 host/guest 错误分类与恢复行为
+- 持续补强 OpenClaude 与 agent-facing 工作流稳定性
+- 改进发布打包与安装体验
 
 成功标准：
 
-- session 可以创建
-- 同一 VM 中可以连续执行命令
-- `exec` 之间文件状态可保留
-- session 可以被干净删除
+- Firecracker 驱动的 agent 工作流失败更少、失败原因更清晰
+- guest 运行产物更易于检查与支持
+- 部署和安装路径更可预测
 
-## 第二阶段：工程化基础
+## 后续阶段：镜像与状态系统
 
-目标：把 MVP 打造成稳定的开发者基础设施。
+目标：改善 guest 镜像管理的可复现性与运维成本。
 
-范围：
+重点：
 
-- Firecracker 运行时集成
-- guest agent
-- `virtio-vsock`
-- HTTP API
-- `base image + overlay`
-- timeout 处理
-- session GC
-- 结构化日志
+- 镜像生命周期管理
+- 更清晰的 rootfs / workspace layering 契约
+- prepared guest image 的可复现构建
+- runtime 产物的清理与回收
+- 更扎实的存储架构文档与工具
 
-## 第三阶段：性能与平台能力
+成功标准：
 
-目标：降低冷启动成本并改善运行时体验。
+- prepared guest image 更容易重建和理解
+- runtime 状态更容易安全回收
+- rootfs 和 workspace 行为更容易被用户理解
 
-范围：
+## 更后阶段：性能优化
+
+目标：降低冷启动成本，改善重复任务体验。
+
+重点：
 
 - snapshot / restore
-- 预热 VM 池
-- 流式输出
-- 网络白名单模式
-- 指标与可观测性
+- 更快的 guest 启动
+- 预热池或类似复用机制
+- 流式输出与长任务体验优化
 
-## 第四阶段：社区与生态
+成功标准：
 
-目标：让外部开发者更容易使用和参与 AIR。
+- 启动延迟显著下降
+- 重复 agent 工作流的操作体验更好
 
-范围：
+## 生态与社区
 
-- 示例和 demo
-- starter issue
-- 公开架构讨论
+目标：让外部用户更容易采用 AIR。
+
+重点：
+
+- 更好的示例与教程
 - 贡献者 onboarding
-- benchmark 与对比材料
+- 公开架构说明
+- 更清晰的打包与发布预期
 
 ## 当前优先级
 
-当前第一优先级仍然是：先把基于 session 的可用 MVP 和真实 AI agent 工作流闭环打通。
+当前第一优先级不再是“先做一个基础 MVP”，而是把已经打通的 AI agent 工作流继续加固，让 Firecracker 驱动的真实使用场景更稳定、更容易运维。

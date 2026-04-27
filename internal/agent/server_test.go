@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/darunshen/AIR/internal/guestapi"
 )
@@ -222,6 +224,64 @@ func TestServerProxy(t *testing.T) {
 	}
 	_ = clientConn.Close()
 	<-done
+}
+
+func TestServerContinuesAfterConnectionError(t *testing.T) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	server := NewServer(listener)
+	server.execFn = func(ctx context.Context, command string) (*guestapi.ExecResult, error) {
+		return &guestapi.ExecResult{Stdout: "ok\n"}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- server.Serve(ctx)
+	}()
+
+	conn1, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial first conn: %v", err)
+	}
+	_ = conn1.Close()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn2, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial second conn: %v", err)
+	}
+	defer conn2.Close()
+
+	var result guestapi.ExecResult
+	roundTrip(t, conn2, guestapi.ExecRequest{
+		Type:      guestapi.MessageTypeExec,
+		RequestID: "req_after_error",
+		Command:   "echo ok",
+		Timeout:   5,
+	}, &result)
+	if strings.TrimSpace(result.Stdout) != "ok" {
+		t.Fatalf("unexpected stdout after prior connection error: %q", result.Stdout)
+	}
+
+	cancel()
+	select {
+	case serveErr := <-done:
+		if serveErr != nil && !errors.Is(serveErr, net.ErrClosed) {
+			t.Fatalf("unexpected serve error: %v", serveErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not stop after cancel")
+	}
 }
 
 func roundTrip(t *testing.T, conn net.Conn, req guestapi.ExecRequest, result *guestapi.ExecResult) {
