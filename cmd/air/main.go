@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -289,6 +291,14 @@ func main() {
 				}); err != nil {
 					exitErr(err)
 				}
+			case "chat":
+				opts, err := parseOpenClaudeChatFlags(args[3:])
+				if err != nil {
+					exitErr(err)
+				}
+				if err := runOpenClaudeChat(context.Background(), manager, opts); err != nil {
+					exitErr(err)
+				}
 			default:
 				usage()
 				os.Exit(1)
@@ -321,6 +331,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air agent openclaude status <session-id>")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude stop <session-id>")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude forward <session-id> [--listen 127.0.0.1:50052]")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude chat <session-id> [--listen 127.0.0.1:50052] [--cli-repo PATH]")
 }
 
 func exitErr(err error) {
@@ -766,6 +777,12 @@ type openClaudeForwardCLIOptions struct {
 	ListenAddress string
 }
 
+type openClaudeChatCLIOptions struct {
+	SessionID     string
+	ListenAddress string
+	CLIRepoPath   string
+}
+
 func parseOpenClaudeStartFlags(args []string) (session.OpenClaudeStartOptions, error) {
 	var opts session.OpenClaudeStartOptions
 	for i := 0; i < len(args); i++ {
@@ -903,6 +920,323 @@ func parseOpenClaudeForwardFlags(args []string) (openClaudeForwardCLIOptions, er
 	}
 	return opts, nil
 }
+
+func parseOpenClaudeChatFlags(args []string) (openClaudeChatCLIOptions, error) {
+	opts := openClaudeChatCLIOptions{
+		ListenAddress: "127.0.0.1:50052",
+		CLIRepoPath:   os.Getenv("AIR_OPENCLAUDE_REPO"),
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--listen":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeChatCLIOptions{}, errors.New("listen must not be empty")
+			}
+			opts.ListenAddress = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--listen="):
+			opts.ListenAddress = strings.TrimPrefix(arg, "--listen=")
+			if opts.ListenAddress == "" {
+				return openClaudeChatCLIOptions{}, errors.New("listen must not be empty")
+			}
+		case arg == "--cli-repo":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeChatCLIOptions{}, errors.New("cli-repo must not be empty")
+			}
+			opts.CLIRepoPath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--cli-repo="):
+			opts.CLIRepoPath = strings.TrimPrefix(arg, "--cli-repo=")
+			if opts.CLIRepoPath == "" {
+				return openClaudeChatCLIOptions{}, errors.New("cli-repo must not be empty")
+			}
+		case strings.HasPrefix(arg, "--"):
+			return openClaudeChatCLIOptions{}, fmt.Errorf("unknown openclaude chat flag: %s", arg)
+		default:
+			if opts.SessionID != "" {
+				return openClaudeChatCLIOptions{}, errors.New("usage: air agent openclaude chat <session-id> [--listen 127.0.0.1:50052] [--cli-repo PATH]")
+			}
+			opts.SessionID = arg
+		}
+	}
+	if opts.SessionID == "" {
+		return openClaudeChatCLIOptions{}, errors.New("usage: air agent openclaude chat <session-id> [--listen 127.0.0.1:50052] [--cli-repo PATH]")
+	}
+	if opts.CLIRepoPath == "" {
+		return openClaudeChatCLIOptions{}, errors.New("openclaude cli repo path is required; use --cli-repo or AIR_OPENCLAUDE_REPO")
+	}
+	return opts, nil
+}
+
+func runOpenClaudeChat(ctx context.Context, manager *session.Manager, opts openClaudeChatCLIOptions) error {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	inspect, err := manager.Inspect(opts.SessionID)
+	if err != nil {
+		return err
+	}
+	transcriptPath := filepath.Join(inspect.Runtime.RootPath, "openclaude-chat-transcript.jsonl")
+
+	forwardErrCh := make(chan error, 1)
+	go func() {
+		forwardErrCh <- manager.ForwardOpenClaude(ctx, opts.SessionID, session.OpenClaudeForwardOptions{
+			ListenAddress: opts.ListenAddress,
+		})
+	}()
+
+	host, port, err := splitListenAddress(opts.ListenAddress)
+	if err != nil {
+		stop()
+		<-forwardErrCh
+		return err
+	}
+
+	scriptPath, err := writeOpenClaudeChatScript(opts.CLIRepoPath)
+	if err != nil {
+		stop()
+		<-forwardErrCh
+		return err
+	}
+	defer os.Remove(scriptPath)
+
+	cli := exec.CommandContext(ctx, "bun", "run", scriptPath)
+	cli.Dir = opts.CLIRepoPath
+	cli.Env = append(os.Environ(),
+		"GRPC_HOST="+host,
+		"GRPC_PORT="+port,
+		"AIR_OPENCLAUDE_CHAT_SESSION="+opts.SessionID,
+		"AIR_OPENCLAUDE_CHAT_PROVIDER="+inspect.Session.Provider,
+		"AIR_OPENCLAUDE_CHAT_WORKDIR=/workspace",
+		"AIR_OPENCLAUDE_CHAT_TRANSCRIPT="+transcriptPath,
+	)
+	cli.Stdin = os.Stdin
+	cli.Stdout = os.Stdout
+	cli.Stderr = os.Stderr
+
+	fmt.Fprintf(os.Stderr, "air: openclaude chat on session %s via %s\n", opts.SessionID, opts.ListenAddress)
+	if err := cli.Run(); err != nil {
+		stop()
+		<-forwardErrCh
+		return err
+	}
+
+	stop()
+	if err := <-forwardErrCh; err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
+}
+
+func writeOpenClaudeChatScript(repoPath string) (string, error) {
+	dir := os.TempDir()
+	f, err := os.CreateTemp(dir, "air-openclaude-chat-*.mjs")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(openClaudeChatScript); err != nil {
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+func splitListenAddress(address string) (string, string, error) {
+	host, port, ok := strings.Cut(address, ":")
+	if !ok || host == "" || port == "" {
+		return "", "", fmt.Errorf("invalid listen address: %s", address)
+	}
+	return host, port, nil
+}
+
+const openClaudeChatScript = `import * as grpc from '@grpc/grpc-js'
+import * as protoLoader from '@grpc/proto-loader'
+import fs from 'fs'
+import path from 'path'
+import * as readline from 'readline'
+
+const sessionId = process.env.AIR_OPENCLAUDE_CHAT_SESSION || 'air-session'
+const provider = process.env.AIR_OPENCLAUDE_CHAT_PROVIDER || 'unknown'
+const workdir = process.env.AIR_OPENCLAUDE_CHAT_WORKDIR || '/workspace'
+const transcriptPath = process.env.AIR_OPENCLAUDE_CHAT_TRANSCRIPT || ''
+const host = process.env.GRPC_HOST || '127.0.0.1'
+const port = process.env.GRPC_PORT || '50052'
+const protoPath = path.resolve(process.cwd(), 'src/proto/openclaude.proto')
+
+const packageDefinition = protoLoader.loadSync(protoPath, {
+  keepCase: true,
+  longs: String,
+  enums: String,
+  defaults: true,
+  oneofs: true,
+})
+
+const protoDescriptor = grpc.loadPackageDefinition(packageDefinition)
+const openclaudeProto = protoDescriptor.openclaude.v1
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+})
+
+function askQuestion(query) {
+  return new Promise(resolve => {
+    rl.question(query, resolve)
+  })
+}
+
+function appendTranscript(eventType, payload = {}) {
+  if (!transcriptPath) {
+    return
+  }
+  try {
+    const body = {
+      ts: new Date().toISOString(),
+      event: eventType,
+      session_id: sessionId,
+      provider,
+      workdir,
+      ...payload,
+    }
+    fs.appendFileSync(transcriptPath, JSON.stringify(body) + '\n')
+  } catch (_) {
+  }
+}
+
+async function main() {
+  const client = new openclaudeProto.AgentService(
+    host + ':' + port,
+    grpc.credentials.createInsecure(),
+  )
+
+  let call = null
+  let textStreamed = false
+
+  const promptLabel = '\x1b[36mair:openclaude@' + sessionId + '\x1b[0m'
+  const approveLabel = '\x1b[33mair:approve@' + sessionId + '\x1b[0m'
+
+  const promptUser = async () => {
+    const message = await askQuestion('\n' + promptLabel + '> ')
+    const trimmed = message.trim().toLowerCase()
+    if (trimmed === '/exit' || trimmed === '/quit') {
+      appendTranscript('user_exit', { text: '/exit' })
+      console.log('bye')
+      rl.close()
+      process.exit(0)
+    }
+    appendTranscript('user_message', { text: message })
+    if (!call || call.destroyed) {
+      startStream()
+    }
+    call.write({
+      request: {
+        session_id: sessionId,
+        message,
+        working_directory: workdir,
+      },
+    })
+  }
+
+  const startStream = () => {
+    call = client.Chat()
+    textStreamed = false
+
+    call.on('data', async (serverMessage) => {
+      if (serverMessage.text_chunk) {
+        process.stdout.write(serverMessage.text_chunk.text)
+        textStreamed = true
+        appendTranscript('assistant_text_chunk', { text: serverMessage.text_chunk.text })
+        return
+      }
+      if (serverMessage.tool_start) {
+        console.log('\n\x1b[36m[Tool Call]\x1b[0m \x1b[1m' + serverMessage.tool_start.tool_name + '\x1b[0m')
+        console.log('\x1b[90m' + serverMessage.tool_start.arguments_json + '\x1b[0m\n')
+        appendTranscript('tool_start', {
+          tool_name: serverMessage.tool_start.tool_name,
+          arguments_json: serverMessage.tool_start.arguments_json,
+          tool_use_id: serverMessage.tool_start.tool_use_id,
+        })
+        return
+      }
+      if (serverMessage.tool_result) {
+        console.log('\n\x1b[32m[Tool Result]\x1b[0m \x1b[1m' + serverMessage.tool_result.tool_name + '\x1b[0m')
+        const out = serverMessage.tool_result.output || ''
+        if (out.length > 500) {
+          console.log('\x1b[90m' + out.substring(0, 500) + '...\n(Output truncated, total length: ' + out.length + ')\x1b[0m')
+        } else {
+          console.log('\x1b[90m' + out + '\x1b[0m')
+        }
+        appendTranscript('tool_result', {
+          tool_name: serverMessage.tool_result.tool_name,
+          output: out,
+          is_error: !!serverMessage.tool_result.is_error,
+          tool_use_id: serverMessage.tool_result.tool_use_id,
+        })
+        return
+      }
+      if (serverMessage.action_required) {
+        const action = serverMessage.action_required
+        const reply = await askQuestion('\n' + approveLabel + '> ' + action.question + ' (y/n) ')
+        appendTranscript('approval_response', {
+          question: action.question,
+          prompt_id: action.prompt_id,
+          reply: reply.trim(),
+        })
+        call.write({
+          input: {
+            prompt_id: action.prompt_id,
+            reply: reply.trim(),
+          },
+        })
+        return
+      }
+      if (serverMessage.done) {
+        if (!textStreamed && serverMessage.done.full_text) {
+          process.stdout.write(serverMessage.done.full_text)
+        }
+        textStreamed = false
+        appendTranscript('assistant_done', {
+          full_text: serverMessage.done.full_text || '',
+          prompt_tokens: serverMessage.done.prompt_tokens || 0,
+          completion_tokens: serverMessage.done.completion_tokens || 0,
+        })
+        console.log('\n\x1b[32m[Done]\x1b[0m')
+        promptUser()
+        return
+      }
+      if (serverMessage.error) {
+        console.error('\n\x1b[31m[Server Error]\x1b[0m ' + serverMessage.error.message)
+        appendTranscript('server_error', {
+          message: serverMessage.error.message,
+          code: serverMessage.error.code || '',
+        })
+        promptUser()
+      }
+    })
+
+    call.on('error', (err) => {
+      console.error('\n\x1b[31m[Stream Error]\x1b[0m', err.message)
+      appendTranscript('stream_error', { message: err.message })
+      promptUser()
+    })
+  }
+
+  console.log('\x1b[32mAIR OpenClaude Chat\x1b[0m')
+  console.log('\x1b[90mprovider=' + provider + ' session=' + sessionId + ' workdir=' + workdir + '\x1b[0m')
+  console.log('\x1b[90mConnected to ' + host + ':' + port + '. Type /exit to quit.\x1b[0m')
+  if (transcriptPath) {
+    console.log('\x1b[90mtranscript=' + transcriptPath + '\x1b[0m')
+    appendTranscript('session_start', { target: host + ':' + port })
+  }
+  await promptUser()
+}
+
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})
+`
 
 func parseRunFlags(args []string) (runCLIOptions, string, error) {
 	opts := runCLIOptions{

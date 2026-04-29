@@ -289,3 +289,22 @@ For agent-facing usage, continue with:
 - [Using AIR From AI Agents](ai-agent-usage.en.md)
 - [OpenClaude Integration](openclaude-integration.en.md)
 - [LLM Acceptance Results](llm-acceptance-results.en.md)
+
+The shortest host-side text entry point is:
+
+```bash
+AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
+air agent openclaude chat <session_id>
+```
+
+Once started, AIR shows:
+
+- an `air:openclaude@<session_id>` prompt
+- the current `provider/session/workdir` header
+- the transcript output path
+
+The current transcript file is:
+
+```text
+runtime/sessions/<provider>/<session_id>/openclaude-chat-transcript.jsonl
+```

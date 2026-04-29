@@ -290,3 +290,22 @@ runtime/sessions/firecracker/<session_id>/
 - [AI Agent 使用说明](ai-agent-usage.md)
 - [OpenClaude 接入方案](openclaude-integration.md)
 - [LLM 验收结果](llm-acceptance-results.md)
+
+最短的 host 侧文字入口是：
+
+```bash
+AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
+air agent openclaude chat <session_id>
+```
+
+进入后会显示：
+
+- `air:openclaude@<session_id>` 提示符
+- 当前 `provider/session/workdir` 状态头
+- transcript 落盘路径
+
+当前 transcript 文件为：
+
+```text
+runtime/sessions/<provider>/<session_id>/openclaude-chat-transcript.jsonl
+```

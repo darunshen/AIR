@@ -153,6 +153,7 @@ air agent openclaude forward <session-id> --listen 127.0.0.1:50052
 - 会在 OpenClaude repo 下记录 `.air/openclaude/<session-id>/server.pid` 和 `server.log`
 - `air session delete <session-id>` 会先尝试停止托管的 OpenClaude 进程，再清理 session
 - `air agent openclaude forward` 会在宿主机打开本地 TCP 端口，并转发到 session 内的 OpenClaude TCP endpoint
+- `air agent openclaude chat` 会自动打开本地转发，并启动 AIR 自己的 host 侧文字前端
 - `local` provider 下直接转发到本机 TCP；`firecracker` provider 下通过 `air-agent` 的 vsock proxy 子协议转发到 guest 内 TCP
 - Firecracker guest 下会显式注入 session 私有可写 `HOME` 与 `CLAUDE_CONFIG_DIR`，避免 OpenClaude 向只读根盘写入全局配置
 
@@ -169,6 +170,28 @@ air agent openclaude forward "$session_id" --listen 127.0.0.1:50052
 air agent openclaude status "$session_id"
 air agent openclaude stop "$session_id"
 ```
+
+如果你想直接在 host 侧通过文字驱动 guest 内 OpenClaude，可用：
+
+```bash
+AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
+air agent openclaude chat "$session_id"
+```
+
+这条命令会：
+
+- 自动把宿主机 `127.0.0.1:50052` 转发到 session 内 OpenClaude
+- 在宿主机显示 `air:openclaude@<session-id>` 风格提示符
+- 让你直接输入文本任务、看流式回复、确认工具调用
+- 启动时显示 `provider/session/workdir` 状态头
+- 把整段对话落到 session runtime 目录下的 `openclaude-chat-transcript.jsonl`
+
+当前 transcript 已按 JSONL 结构化，适合后续做：
+
+- 回放
+- 检索
+- Web UI 展示
+- LLM 验收归档
 
 前提：
 

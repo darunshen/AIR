@@ -147,6 +147,7 @@ AIR now implements this first launcher baseline:
 - repo-local state is recorded under `.air/openclaude/<session-id>/server.pid` and `server.log`
 - `air session delete <session-id>` attempts to stop the managed OpenClaude process before tearing down the session
 - `air agent openclaude forward` opens a local host TCP port and forwards it to the session's OpenClaude TCP endpoint
+- `air agent openclaude chat` opens a temporary local forward and starts an AIR-owned host-side text frontend
 - on `local`, this forwards directly to host TCP; on `firecracker`, it forwards through an `air-agent` vsock proxy sub-protocol into guest TCP
 - on Firecracker guests, AIR injects a session-private writable `HOME` and `CLAUDE_CONFIG_DIR` so OpenClaude does not try to write global config into a read-only rootfs
 
@@ -163,6 +164,28 @@ air agent openclaude forward "$session_id" --listen 127.0.0.1:50052
 air agent openclaude status "$session_id"
 air agent openclaude stop "$session_id"
 ```
+
+If you want the simplest host-side text workflow against guest OpenClaude, use:
+
+```bash
+AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
+air agent openclaude chat "$session_id"
+```
+
+This command:
+
+- automatically forwards host `127.0.0.1:50052` into the session OpenClaude endpoint
+- shows an `air:openclaude@<session-id>` style prompt on the host
+- lets you submit text tasks, watch streaming output, and confirm tool calls
+- prints a `provider/session/workdir` status header when the chat starts
+- writes the conversation transcript to `openclaude-chat-transcript.jsonl` under the session runtime directory
+
+The transcript is now structured as JSONL, which makes it directly reusable for:
+
+- replay
+- search
+- Web UI rendering
+- LLM acceptance archival
 
 Prerequisites:
 
