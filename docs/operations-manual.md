@@ -298,6 +298,7 @@ air chat
 ```
 
 它会交互式补齐首次运行所需依赖和配置，然后直接进入聊天。
+在 `firecracker` 模式下，这一步会按需提示下载 AIR 官方 Firecracker bundle、AIR 官方 OpenClaude Firecracker guest rootfs bundle，以及 AIR 官方 OpenClaude host bundle（当前仅 `linux/amd64`）。
 首次录入的模型配置会保存到 `~/.config/air/chat.json`。
 如果要强制重新录入模型配置，可执行 `air chat --reconfigure`。
 

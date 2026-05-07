@@ -72,6 +72,9 @@ done
 
 if [[ -n "${AIR_OPENCLAUDE_REPO:-}" ]]; then
   "$ROOT_DIR/scripts/build-openclaude-bundle.sh" "$OUT_DIR_ABS" "$AIR_OPENCLAUDE_REPO"
+  for arch in amd64 arm64; do
+    "$ROOT_DIR/scripts/build-openclaude-firecracker-bundle.sh" "$OUT_DIR_ABS" "$AIR_OPENCLAUDE_REPO" "$arch"
+  done
 fi
 
 "$ROOT_DIR/scripts/build-apt-repo.sh" "$OUT_DIR_ABS/apt-repo" "$VERSION_CLEAN" "${debs[@]}"

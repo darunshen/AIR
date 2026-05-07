@@ -14,6 +14,7 @@ const (
 	defaultBundledKernelImage               = "hello-vmlinux.bin"
 	defaultBundledRootfsImage               = "hello-rootfs.ext4"
 	defaultBundledPatchedRootfsImage        = "hello-rootfs-air.ext4"
+	defaultBundledOpenClaudeRootfsImage     = "openclaude-alpine-rootfs.ext4"
 	defaultBundledFirecracker               = "firecracker"
 	defaultFirecrackerBootArgs              = "console=ttyS0 reboot=k panic=1 pci=off"
 	defaultKVMDevice                        = "/dev/kvm"
@@ -103,4 +104,9 @@ func firecrackerAssetDirs(cwd string) []string {
 	}
 
 	return candidates
+}
+
+func ResolveFirecrackerAsset(name string) string {
+	cwd, _ := os.Getwd()
+	return bundledFirecrackerAsset(cwd, name)
 }

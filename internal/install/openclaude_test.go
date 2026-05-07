@@ -28,6 +28,32 @@ func TestOfficialOpenClaudeBundleURLUsesLatestForDevBuild(t *testing.T) {
 	}
 }
 
+func TestOfficialOpenClaudeGuestBundleURL(t *testing.T) {
+	t.Helper()
+
+	url, err := OfficialOpenClaudeGuestBundleURL("v0.1.1", "linux", "arm64")
+	if err != nil {
+		t.Fatalf("official guest bundle url: %v", err)
+	}
+	want := "https://github.com/darunshen/AIR/releases/download/v0.1.1/air_openclaude_firecracker_linux_arm64.tar.gz"
+	if url != want {
+		t.Fatalf("unexpected url: got %q want %q", url, want)
+	}
+}
+
+func TestOfficialOpenClaudeGuestBundleURLUsesLatestForDevBuild(t *testing.T) {
+	t.Helper()
+
+	url, err := OfficialOpenClaudeGuestBundleURL("dev", "linux", "amd64")
+	if err != nil {
+		t.Fatalf("official guest bundle latest url: %v", err)
+	}
+	want := "https://github.com/darunshen/AIR/releases/latest/download/air_openclaude_firecracker_linux_amd64.tar.gz"
+	if url != want {
+		t.Fatalf("unexpected latest url: got %q want %q", url, want)
+	}
+}
+
 func TestOfficialOpenClaudeBundleURLRejectsUnsupportedArch(t *testing.T) {
 	t.Helper()
 

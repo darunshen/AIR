@@ -9,6 +9,8 @@ AIR currently produces release archives, Firecracker bundles, `.deb` packages, a
 Release artifacts now also include Linux OpenClaude host runtime bundles:
 
 - `air_openclaude_linux_amd64.tar.gz`
+- `air_openclaude_firecracker_linux_amd64.tar.gz`
+- `air_openclaude_firecracker_linux_arm64.tar.gz`
 
 ## 2. Version Information
 
@@ -36,6 +38,7 @@ air chat
 
 - choose `local` or `firecracker`
 - offer to download the official AIR Firecracker bundle when assets are missing
+- offer to download the official AIR OpenClaude Firecracker guest bundle when the guest rootfs is missing
 - on `linux/amd64`, prefer downloading the official AIR OpenClaude bundle when the host runtime is missing; on other architectures, or when that download path fails, fall back to source download plus `bun install`
 - prompt for model settings such as `OPENAI_BASE_URL`, `OPENAI_MODEL`, and `OPENAI_API_KEY`
 - persist the first saved model settings to `~/.config/air/chat.json`

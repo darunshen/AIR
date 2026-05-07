@@ -656,6 +656,9 @@ func runChatWizard(ctx context.Context, manager *session.Manager, opts chatCLIOp
 				return err
 			}
 		}
+		if err := ensureOpenClaudeGuestRootfsInteractive(); err != nil {
+			return err
+		}
 	}
 
 	repoPath, err := ensureOpenClaudeCLIRepo()
@@ -711,6 +714,37 @@ func ensureOpenClaudeCLIRepo() (string, error) {
 	}
 	_ = os.Setenv("AIR_OPENCLAUDE_REPO", resolved)
 	return resolved, nil
+}
+
+func ensureOpenClaudeGuestRootfsInteractive() error {
+	if value := os.Getenv("AIR_FIRECRACKER_ROOTFS"); value != "" {
+		if _, err := os.Stat(value); err == nil {
+			return nil
+		}
+	}
+
+	if resolved := vm.ResolveFirecrackerAsset("openclaude-alpine-rootfs.ext4"); resolved != "" {
+		_ = os.Setenv("AIR_FIRECRACKER_ROOTFS", resolved)
+		return nil
+	}
+
+	installDir := resolvedInitDir("")
+	fmt.Fprintf(os.Stdout, "OpenClaude guest rootfs 未找到，默认安装位置：%s\n", installDir)
+	ok, err := promptConfirm(fmt.Sprintf("下载 AIR 官方 OpenClaude Firecracker guest 镜像到 %s", installDir))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("chat cancelled")
+	}
+
+	rootfsPath, err := installOfficialOpenClaudeGuestBundle(installDir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "installed OpenClaude guest rootfs to %s\n", rootfsPath)
+	_ = os.Setenv("AIR_FIRECRACKER_ROOTFS", rootfsPath)
+	return nil
 }
 
 func defaultOpenClaudeRepoPath() string {
@@ -771,6 +805,14 @@ func installOfficialOpenClaudeBundle(repoPath string) error {
 	}
 	fmt.Fprintf(os.Stdout, "installed official OpenClaude runtime to %s\n", installedDir)
 	return validateOpenClaudeRepo(installedDir)
+}
+
+func installOfficialOpenClaudeGuestBundle(outputDir string) (string, error) {
+	version := install.CurrentVersion()
+	if version == "" {
+		version = "latest"
+	}
+	return install.DownloadOfficialOpenClaudeGuestBundle(context.Background(), version, outputDir)
 }
 
 func installOpenClaudeRepoFromSource(repoPath string) error {

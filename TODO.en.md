@@ -158,6 +158,21 @@ This file is the English companion of the working TODO and should track the same
   - the GitHub Actions release workflow was added
   - `docs/release-distribution.md` was added
 
+- The `air chat` first-run entrypoint is now stronger
+  - `air chat` is supported
+  - `air chat --reconfigure` is supported
+  - first-run model settings can be entered interactively and persisted to `~/.config/air/chat.json`
+  - in `firecracker` mode it can now interactively offer the AIR official Firecracker bundle
+  - in `firecracker` mode it can now interactively offer the AIR official OpenClaude guest rootfs bundle
+  - on `linux/amd64` it prefers the AIR official OpenClaude host bundle
+  - if the host bundle path is unavailable, it falls back to source download plus `bun install`
+
+- Official OpenClaude release artifacts are now expanded
+  - `air_openclaude_linux_amd64.tar.gz` is supported
+  - `air_openclaude_firecracker_linux_amd64.tar.gz` is supported
+  - `air_openclaude_firecracker_linux_arm64.tar.gz` is supported
+  - the release workflow now builds the OpenClaude Firecracker guest bundle
+
 - OpenClaude inside AIR is now substantially wired through
   - `air agent openclaude start/status/stop` exists
   - `air agent openclaude forward` exists

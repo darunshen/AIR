@@ -27,6 +27,8 @@
 - `air_<version>_linux_amd64.tar.gz`
 - `air_<version>_linux_arm64.tar.gz`
 - `air_openclaude_linux_amd64.tar.gz`
+- `air_openclaude_firecracker_linux_amd64.tar.gz`
+- `air_openclaude_firecracker_linux_arm64.tar.gz`
 - `air_firecracker_linux_amd64.tar.gz`
 - `air_firecracker_linux_arm64.tar.gz`
 - `air_<version>_darwin_amd64.tar.gz`
@@ -90,9 +92,10 @@ BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 2. 如果仓库配置了 `DEEPSEEK_API_KEY` secret，复用 `llm-acceptance` workflow 跑真实 LLM 验收
 3. 构建跨平台归档
 4. 构建 OpenClaude host runtime bundle
-5. 构建 Linux `.deb`
-6. 生成 apt 仓库目录压缩包
-7. 上传到 GitHub Release
+5. 构建 OpenClaude Firecracker guest bundle
+6. 构建 Linux `.deb`
+7. 生成 apt 仓库目录压缩包
+8. 上传到 GitHub Release
 
 ## 5. `.deb` 安装
 
@@ -119,6 +122,7 @@ air chat
 
 - 选择 `local` 或 `firecracker`
 - 如果缺少 Firecracker 资产，提示是否下载 AIR 官方 bundle
+- 如果缺少 OpenClaude guest rootfs，提示是否下载 AIR 官方 OpenClaude Firecracker guest bundle
 - 如果缺少 OpenClaude host 运行目录，在 `linux/amd64` 上优先提示下载 AIR 官方 OpenClaude bundle；其他架构或下载失败时回退到源码下载并执行 `bun install`
 - 如果缺少模型配置，提示录入 `OPENAI_BASE_URL`、`OPENAI_MODEL`、`OPENAI_API_KEY`
 - 首次录入的模型配置会保存到 `~/.config/air/chat.json`

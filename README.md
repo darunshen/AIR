@@ -122,6 +122,7 @@ The current recommended asset strategy is:
 - kernel and demo rootfs baseline: official Firecracker demo assets
 - AIR guest agent injection: `scripts/prepare-firecracker-rootfs.sh`
 - OpenClaude guest image: `scripts/prepare-openclaude-alpine-rootfs.sh`
+- official OpenClaude guest release bundle: `air_openclaude_firecracker_linux_amd64.tar.gz` / `air_openclaude_firecracker_linux_arm64.tar.gz`
 
 If you installed AIR from `.deb`, the package contains the CLI, but not the Firecracker binary, kernel, or rootfs assets. Run:
 
@@ -132,6 +133,7 @@ air chat
 `air chat` now acts as the first-run entry point:
 
 - it can prompt to download the official AIR Firecracker bundle
+- it can prompt to download the official AIR OpenClaude Firecracker guest rootfs bundle
 - on `linux/amd64`, it can prompt to download the official AIR OpenClaude host bundle
 - it collects model configuration interactively before entering chat
 
@@ -284,8 +286,21 @@ scripts/run-openclaude-firecracker-acceptance.sh
 - kernel / demo rootfs 基线：官方 demo 资产
 - AIR guest agent 注入：`scripts/prepare-firecracker-rootfs.sh`
 - OpenClaude guest 镜像：`scripts/prepare-openclaude-alpine-rootfs.sh`
+- 官方 OpenClaude guest 发布包：`air_openclaude_firecracker_linux_amd64.tar.gz` / `air_openclaude_firecracker_linux_arm64.tar.gz`
 
-如果你是通过 `.deb` 安装 AIR，需要注意安装包只包含 CLI，不包含 Firecracker 二进制、kernel 或 rootfs 资产。启用 `firecracker` provider 前先执行：
+如果你是通过 `.deb` 安装 AIR，需要注意安装包只包含 CLI，不包含 Firecracker 二进制、kernel 或 rootfs 资产。最推荐的首次入口是：
+
+```bash
+air chat
+```
+
+`air chat` 会交互提示是否下载：
+
+- AIR 官方 Firecracker bundle
+- AIR 官方 OpenClaude Firecracker guest rootfs bundle
+- AIR 官方 OpenClaude host bundle（当前仅 `linux/amd64`）
+
+如果你只想单独准备或检查 Firecracker 资产，也可以执行：
 
 ```bash
 air init firecracker

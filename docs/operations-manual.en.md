@@ -297,6 +297,7 @@ air chat
 ```
 
 It interactively prepares the missing runtime dependencies and configuration, then enters chat directly.
+On `firecracker`, this step can prompt for the AIR official Firecracker bundle, the AIR official OpenClaude Firecracker guest rootfs bundle, and the AIR official OpenClaude host bundle (currently `linux/amd64` only).
 The first saved model settings are persisted to `~/.config/air/chat.json`.
 To force model setup again, run `air chat --reconfigure`.
 

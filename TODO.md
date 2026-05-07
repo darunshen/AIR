@@ -156,6 +156,21 @@
   - 已新增 GitHub Actions release workflow
   - 已新增 `docs/release-distribution.md`
 
+- `air chat` 首次交互入口已补强
+  - 已支持 `air chat`
+  - 已支持 `air chat --reconfigure`
+  - 已支持首次交互录入并保存模型配置到 `~/.config/air/chat.json`
+  - `firecracker` 模式下已支持交互提示下载 AIR 官方 Firecracker bundle
+  - `firecracker` 模式下已支持交互提示下载 AIR 官方 OpenClaude guest rootfs bundle
+  - `linux/amd64` 下已支持优先下载 AIR 官方 OpenClaude host bundle
+  - host bundle 不可用时会自动回退到源码下载和 `bun install`
+
+- OpenClaude 官方发布产物已扩展
+  - 已支持 `air_openclaude_linux_amd64.tar.gz`
+  - 已支持 `air_openclaude_firecracker_linux_amd64.tar.gz`
+  - 已支持 `air_openclaude_firecracker_linux_arm64.tar.gz`
+  - release workflow 已纳入 OpenClaude Firecracker guest bundle 构建
+
 ## Priority Rule
 
 - 优先级判断标准调整为：先打通 AI agent 真实工作流，再补底层工程化
