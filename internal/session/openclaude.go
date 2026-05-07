@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -22,7 +23,7 @@ const (
 	defaultOpenClaudeCommand      = "/usr/local/bin/bun run scripts/start-grpc.ts"
 	defaultOpenClaudeHost         = "127.0.0.1"
 	defaultOpenClaudePort         = 50051
-	defaultOpenClaudeReadyTimeout = 60 * time.Second
+	defaultOpenClaudeReadyTimeout = 180 * time.Second
 )
 
 var ErrOpenClaudeNotConfigured = errors.New("openclaude is not configured for this session")
@@ -129,12 +130,14 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 		repoPath = path.Clean(repoPath)
 	}
 
+	env := applyOpenClaudeRuntimeEnv(inspect.Session.Provider, opts.Env)
+
 	meta := &openClaudeMetadata{
 		SessionID: sessionID,
 		Provider:  inspect.Session.Provider,
 		RepoPath:  repoPath,
 		Command:   opts.Command,
-		EnvKeys:   sortedEnvKeys(opts.Env),
+		EnvKeys:   sortedEnvKeys(env),
 		Host:      opts.Host,
 		Port:      opts.Port,
 		StateDir:  openClaudeStateDirForProvider(inspect.Session.Provider, repoPath, sessionID),
@@ -143,7 +146,7 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 	meta.PIDPath = path.Join(meta.StateDir, "server.pid")
 	meta.LogPath = path.Join(meta.StateDir, "server.log")
 
-	result, err := m.Exec(sessionID, renderOpenClaudeStartCommand(meta, opts.Env))
+	result, err := m.Exec(sessionID, renderOpenClaudeStartCommand(meta, env))
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +437,7 @@ func resolveOpenClaudeRepoPath(provider string, opts OpenClaudeStartOptions) str
 
 func openClaudeStateDirForProvider(provider, repoPath, sessionID string) string {
 	if provider == "firecracker" {
-		return path.Join("/run/air/openclaude", sessionID)
+		return path.Join("/workspace", ".air", "openclaude", sessionID)
 	}
 	return openClaudeStateDir(repoPath, sessionID)
 }
@@ -561,6 +564,53 @@ func collectOpenClaudeProviderEnv(environ []string) map[string]string {
 		}
 	}
 	return out
+}
+
+func applyOpenClaudeRuntimeEnv(provider string, env map[string]string) map[string]string {
+	out := make(map[string]string, len(env)+3)
+	for key, value := range env {
+		out[key] = value
+	}
+	if isTruthyEnvValue(out["CLAUDE_CODE_USE_OPENAI"]) {
+		delete(out, "ANTHROPIC_API_KEY")
+		delete(out, "ANTHROPIC_BASE_URL")
+		delete(out, "ANTHROPIC_MODEL")
+	}
+	if provider == "firecracker" {
+		proxyURL := "http://127.0.0.1:18080"
+		if shouldUseFirecrackerGuestProxy(out["HTTP_PROXY"]) {
+			out["HTTP_PROXY"] = proxyURL
+		}
+		if shouldUseFirecrackerGuestProxy(out["HTTPS_PROXY"]) {
+			out["HTTPS_PROXY"] = proxyURL
+		}
+		if shouldUseFirecrackerGuestProxy(out["ALL_PROXY"]) {
+			out["ALL_PROXY"] = proxyURL
+		}
+	}
+	return out
+}
+
+func shouldUseFirecrackerGuestProxy(value string) bool {
+	if value == "" {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	switch host {
+	case "", "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTruthyEnvValue(value string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(value))
+	return normalized != "" && normalized != "0" && normalized != "false" && normalized != "no"
 }
 
 func sortedEnvKeys(env map[string]string) []string {

@@ -6,3 +6,4 @@ air
 *.test.exe
 assets/firecracker/
 dist/
+tmp/

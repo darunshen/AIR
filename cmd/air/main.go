@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -88,6 +90,14 @@ func main() {
 		}
 		if !report.Ready {
 			os.Exit(1)
+		}
+	case "chat":
+		opts, err := parseChatFlags(args[1:])
+		if err != nil {
+			exitErr(err)
+		}
+		if err := runChatWizard(context.Background(), manager, opts); err != nil {
+			exitErr(err)
 		}
 	case "run":
 		opts, command, err := parseRunFlags(args[1:])
@@ -299,6 +309,21 @@ func main() {
 				if err := runOpenClaudeChat(context.Background(), manager, opts); err != nil {
 					exitErr(err)
 				}
+			case "run":
+				opts, err := parseOpenClaudeRunFlags(args[3:])
+				if err != nil {
+					exitErr(err)
+				}
+				if err := runOpenClaudeOneCommand(context.Background(), manager, opts); err != nil {
+					exitErr(err)
+				}
+			case "replay":
+				if len(args) != 4 {
+					exitErr(errors.New("usage: air agent openclaude replay <session-id>"))
+				}
+				if err := replayOpenClaudeChat(manager, args[3], os.Stdout); err != nil {
+					exitErr(err)
+				}
 			default:
 				usage()
 				os.Exit(1)
@@ -318,6 +343,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air version")
 	fmt.Fprintln(os.Stderr, "  air init firecracker [--source official|custom] [--dir PATH] [--yes]")
 	fmt.Fprintln(os.Stderr, "  air doctor [--provider local|firecracker] [--human]")
+	fmt.Fprintln(os.Stderr, "  air chat [--provider local|firecracker] [--workspace PATH] [--listen 127.0.0.1:50052] [--reconfigure]")
 	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--workspace PATH] [--human] -- <command>")
 	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker] [--workspace PATH]")
 	fmt.Fprintln(os.Stderr, "  air session list")
@@ -332,6 +358,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air agent openclaude stop <session-id>")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude forward <session-id> [--listen 127.0.0.1:50052]")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude chat <session-id> [--listen 127.0.0.1:50052] [--cli-repo PATH]")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude run [--provider local|firecracker] [--workspace PATH] [--repo PATH] [--guest-repo PATH] [--listen 127.0.0.1:50052]")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude replay <session-id>")
 }
 
 func exitErr(err error) {
@@ -380,6 +408,19 @@ type initFirecrackerCLIOptions struct {
 	Source string
 	Dir    string
 	Yes    bool
+}
+
+type chatCLIOptions struct {
+	Provider      string
+	Reconfigure   bool
+	WorkspacePath string
+	ListenAddress string
+}
+
+type chatProfile struct {
+	OpenAIBaseURL string `json:"openai_base_url"`
+	OpenAIModel   string `json:"openai_model"`
+	OpenAIAPIKey  string `json:"openai_api_key"`
 }
 
 func parseDoctorFlags(args []string) (doctorCLIOptions, error) {
@@ -438,6 +479,66 @@ func parseInitFirecrackerFlags(args []string) (initFirecrackerCLIOptions, error)
 	case "", "official", "custom":
 	default:
 		return initFirecrackerCLIOptions{}, fmt.Errorf("unsupported source: %s", opts.Source)
+	}
+	return opts, nil
+}
+
+func parseChatFlags(args []string) (chatCLIOptions, error) {
+	opts := chatCLIOptions{
+		Provider:      "firecracker",
+		ListenAddress: "127.0.0.1:50052",
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--reconfigure":
+			opts.Reconfigure = true
+		case arg == "--provider":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return chatCLIOptions{}, errors.New("provider must not be empty")
+			}
+			opts.Provider = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--provider="):
+			opts.Provider = strings.TrimPrefix(arg, "--provider=")
+			if opts.Provider == "" {
+				return chatCLIOptions{}, errors.New("provider must not be empty")
+			}
+		case arg == "--workspace":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return chatCLIOptions{}, errors.New("workspace must not be empty")
+			}
+			opts.WorkspacePath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--workspace="):
+			opts.WorkspacePath = strings.TrimPrefix(arg, "--workspace=")
+			if opts.WorkspacePath == "" {
+				return chatCLIOptions{}, errors.New("workspace must not be empty")
+			}
+		case arg == "--listen":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return chatCLIOptions{}, errors.New("listen must not be empty")
+			}
+			opts.ListenAddress = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--listen="):
+			opts.ListenAddress = strings.TrimPrefix(arg, "--listen=")
+			if opts.ListenAddress == "" {
+				return chatCLIOptions{}, errors.New("listen must not be empty")
+			}
+		default:
+			return chatCLIOptions{}, fmt.Errorf("unknown chat flag: %s", arg)
+		}
+	}
+	switch opts.Provider {
+	case "local", "firecracker":
+	default:
+		return chatCLIOptions{}, fmt.Errorf("unsupported provider: %s", opts.Provider)
+	}
+	if opts.WorkspacePath == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			opts.WorkspacePath = cwd
+		}
 	}
 	return opts, nil
 }
@@ -526,6 +627,370 @@ func installOfficialFirecrackerBundle(outputDir string) error {
 		return errors.New("firecracker assets downloaded, but runtime doctor still reports missing dependencies")
 	}
 	return nil
+}
+
+func runChatWizard(ctx context.Context, manager *session.Manager, opts chatCLIOptions) error {
+	if !isInteractiveTerminal(os.Stdin) {
+		return errors.New("air chat requires an interactive terminal")
+	}
+
+	provider := opts.Provider
+	if provider == "" {
+		provider = "firecracker"
+	}
+
+	if provider == "firecracker" {
+		cfg := vm.ResolveConfig("runtime/sessions")
+		cfg.Provider = "firecracker"
+		report := vm.Diagnose(cfg)
+		if !report.Ready {
+			fmt.Fprintln(os.Stdout, "Firecracker 运行时未准备完成。")
+			ok, err := promptConfirm(fmt.Sprintf("下载 AIR 官方 Firecracker 运行包到 %s", resolvedInitDir("")))
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("chat cancelled")
+			}
+			if err := installOfficialFirecrackerBundle(resolvedInitDir("")); err != nil {
+				return err
+			}
+		}
+	}
+
+	repoPath, err := ensureOpenClaudeCLIRepo()
+	if err != nil {
+		return err
+	}
+	if err := ensureProviderEnvInteractive(opts.Reconfigure); err != nil {
+		return err
+	}
+
+	runOpts := openClaudeRunCLIOptions{
+		Provider:      provider,
+		WorkspacePath: opts.WorkspacePath,
+		RepoPath:      repoPath,
+		GuestRepoPath: "/opt/openclaude",
+		ListenAddress: opts.ListenAddress,
+	}
+	return runOpenClaudeOneCommand(ctx, manager, runOpts)
+}
+
+func ensureOpenClaudeCLIRepo() (string, error) {
+	if existing := os.Getenv("AIR_OPENCLAUDE_REPO"); existing != "" {
+		if resolved, err := resolveOpenClaudeRepo(existing); err == nil {
+			return resolved, nil
+		}
+	}
+
+	defaultRepo := defaultOpenClaudeRepoPath()
+	if resolved, err := resolveOpenClaudeRepo(defaultRepo); err == nil {
+		_ = os.Setenv("AIR_OPENCLAUDE_REPO", resolved)
+		return resolved, nil
+	}
+
+	fmt.Fprintf(os.Stdout, "OpenClaude host 运行目录未找到，默认安装位置：%s\n", defaultRepo)
+	ok, err := promptConfirm("自动准备 OpenClaude host 运行时")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", errors.New("chat cancelled")
+	}
+
+	fmt.Fprintln(os.Stdout, "优先尝试下载 AIR 官方 OpenClaude bundle...")
+	if err := installOfficialOpenClaudeBundle(defaultRepo); err != nil {
+		fmt.Fprintf(os.Stdout, "官方 bundle 下载失败，回退到源码安装路径：%v\n", err)
+		if err := installOpenClaudeRepoFromSource(defaultRepo); err != nil {
+			return "", err
+		}
+	}
+	resolved, err := resolveOpenClaudeRepo(defaultRepo)
+	if err != nil {
+		return "", err
+	}
+	_ = os.Setenv("AIR_OPENCLAUDE_REPO", resolved)
+	return resolved, nil
+}
+
+func defaultOpenClaudeRepoPath() string {
+	return install.DefaultOpenClaudeInstallDir()
+}
+
+func validateOpenClaudeRepo(repoPath string) error {
+	if repoPath == "" {
+		return errors.New("openclaude repo path is empty")
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, "scripts", "start-grpc.ts")); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, "package.json")); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, "node_modules")); err != nil {
+		return err
+	}
+	if _, err := exec.LookPath("bun"); err != nil {
+		return fmt.Errorf("bun not found in PATH: %w", err)
+	}
+	return nil
+}
+
+func resolveOpenClaudeRepo(repoPath string) (string, error) {
+	candidates := []string{
+		repoPath,
+		filepath.Join(repoPath, "openclaude"),
+	}
+	var lastErr error
+	for _, candidate := range candidates {
+		if err := validateOpenClaudeRepo(candidate); err == nil {
+			if bundleBun := filepath.Join(repoPath, "bin", "bun"); candidate != repoPath {
+				if info, err := os.Stat(bundleBun); err == nil && info.Mode().IsRegular() {
+					_ = os.Setenv("PATH", filepath.Join(repoPath, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+				}
+			}
+			return candidate, nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("openclaude runtime not found")
+	}
+	return "", lastErr
+}
+
+func installOfficialOpenClaudeBundle(repoPath string) error {
+	version := install.CurrentVersion()
+	if version == "" {
+		version = "latest"
+	}
+	installedDir, err := install.DownloadOfficialOpenClaudeBundle(context.Background(), version, repoPath)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "installed official OpenClaude runtime to %s\n", installedDir)
+	return validateOpenClaudeRepo(installedDir)
+}
+
+func installOpenClaudeRepoFromSource(repoPath string) error {
+	parent := filepath.Dir(repoPath)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return fmt.Errorf("git not found in PATH: %w", err)
+	}
+	if _, err := exec.LookPath("curl"); err != nil {
+		return fmt.Errorf("curl not found in PATH: %w", err)
+	}
+	if _, err := exec.LookPath("unzip"); err != nil {
+		return fmt.Errorf("unzip not found in PATH: %w", err)
+	}
+	if _, err := exec.LookPath("bun"); err != nil {
+		if err := installHostBun(); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stdout, "cloning OpenClaude into %s\n", repoPath)
+		cmd := exec.Command("git", "clone", "--depth=1", "https://github.com/Gitlawb/openclaude.git", repoPath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintln(os.Stdout, "installing OpenClaude dependencies with bun install")
+	cmd := exec.Command("bun", "install")
+	cmd.Dir = repoPath
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func installHostBun() error {
+	fmt.Fprintln(os.Stdout, "bun 未安装，准备下载官方 bun 二进制。")
+	ok, err := promptConfirm("下载并安装 bun 到 ~/.local/bin")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("chat cancelled")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	binDir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return err
+	}
+	var asset string
+	switch runtime.GOARCH {
+	case "amd64":
+		asset = "bun-linux-x64.zip"
+	case "arm64":
+		asset = "bun-linux-aarch64.zip"
+	default:
+		return fmt.Errorf("unsupported architecture for bun: %s", runtime.GOARCH)
+	}
+	tmpDir, err := os.MkdirTemp("", "air-bun-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+	zipPath := filepath.Join(tmpDir, asset)
+	url := "https://github.com/oven-sh/bun/releases/latest/download/" + asset
+	curlCmd := exec.Command("curl", "-fsSL", url, "-o", zipPath)
+	curlCmd.Stdout = os.Stdout
+	curlCmd.Stderr = os.Stderr
+	if err := curlCmd.Run(); err != nil {
+		return err
+	}
+	unzipCmd := exec.Command("unzip", "-q", zipPath, "-d", tmpDir)
+	unzipCmd.Stdout = os.Stdout
+	unzipCmd.Stderr = os.Stderr
+	if err := unzipCmd.Run(); err != nil {
+		return err
+	}
+	bunPath := ""
+	if err := filepath.Walk(tmpDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() && info.Name() == "bun" {
+			bunPath = path
+			return io.EOF
+		}
+		return nil
+	}); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	if bunPath == "" {
+		return errors.New("downloaded bun archive does not contain bun binary")
+	}
+	target := filepath.Join(binDir, "bun")
+	input, err := os.ReadFile(bunPath)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(target, input, 0o755); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "installed bun to %s\n", target)
+	if !strings.Contains(os.Getenv("PATH"), binDir) {
+		_ = os.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	return nil
+}
+
+func ensureProviderEnvInteractive(reconfigure bool) error {
+	if os.Getenv("OPENAI_API_KEY") != "" && os.Getenv("OPENAI_BASE_URL") != "" && os.Getenv("OPENAI_MODEL") != "" {
+		return nil
+	}
+	if !reconfigure {
+		profile, err := loadChatProfile()
+		if err == nil {
+			if os.Getenv("OPENAI_BASE_URL") == "" && profile.OpenAIBaseURL != "" {
+				_ = os.Setenv("OPENAI_BASE_URL", profile.OpenAIBaseURL)
+			}
+			if os.Getenv("OPENAI_MODEL") == "" && profile.OpenAIModel != "" {
+				_ = os.Setenv("OPENAI_MODEL", profile.OpenAIModel)
+			}
+			if os.Getenv("OPENAI_API_KEY") == "" && profile.OpenAIAPIKey != "" {
+				_ = os.Setenv("OPENAI_API_KEY", profile.OpenAIAPIKey)
+			}
+			_ = os.Setenv("CLAUDE_CODE_USE_OPENAI", "1")
+		}
+	}
+	if os.Getenv("OPENAI_API_KEY") != "" && os.Getenv("OPENAI_BASE_URL") != "" && os.Getenv("OPENAI_MODEL") != "" {
+		return nil
+	}
+
+	fmt.Fprintln(os.Stdout, "当前未检测到完整的模型配置，将进入交互设置。")
+	reader := bufio.NewReader(os.Stdin)
+	defaultBaseURL := "https://api.deepseek.com/v1"
+	defaultModel := "deepseek-chat"
+	fmt.Fprintf(os.Stdout, "OpenAI-compatible Base URL [%s]: ", defaultBaseURL)
+	baseURL, err := reader.ReadString('\n')
+	if err != nil {
+		return err
+	}
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
+	fmt.Fprintf(os.Stdout, "Model [%s]: ", defaultModel)
+	modelName, err := reader.ReadString('\n')
+	if err != nil {
+		return err
+	}
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		modelName = defaultModel
+	}
+	fmt.Fprint(os.Stdout, "API Key: ")
+	apiKey, err := reader.ReadString('\n')
+	if err != nil {
+		return err
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return errors.New("API key must not be empty")
+	}
+	_ = os.Setenv("CLAUDE_CODE_USE_OPENAI", "1")
+	_ = os.Setenv("OPENAI_BASE_URL", baseURL)
+	_ = os.Setenv("OPENAI_MODEL", modelName)
+	_ = os.Setenv("OPENAI_API_KEY", apiKey)
+	return saveChatProfile(&chatProfile{
+		OpenAIBaseURL: baseURL,
+		OpenAIModel:   modelName,
+		OpenAIAPIKey:  apiKey,
+	})
+}
+
+func loadChatProfile() (*chatProfile, error) {
+	path, err := chatProfilePath()
+	if err != nil {
+		return nil, err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var profile chatProfile
+	if err := json.Unmarshal(body, &profile); err != nil {
+		return nil, err
+	}
+	return &profile, nil
+}
+
+func saveChatProfile(profile *chatProfile) error {
+	if profile == nil {
+		return errors.New("chat profile is nil")
+	}
+	path, err := chatProfilePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	body, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil {
+		return err
+	}
+	body = append(body, '\n')
+	return os.WriteFile(path, body, 0o600)
+}
+
+func chatProfilePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "air", "chat.json"), nil
 }
 
 func promptInitFirecrackerSource() (string, error) {
@@ -783,6 +1248,37 @@ type openClaudeChatCLIOptions struct {
 	CLIRepoPath   string
 }
 
+type openClaudeRunCLIOptions struct {
+	Provider      string
+	WorkspacePath string
+	RepoPath      string
+	GuestRepoPath string
+	ListenAddress string
+}
+
+type openClaudeTranscriptEvent struct {
+	Timestamp  string `json:"ts"`
+	Event      string `json:"event"`
+	SessionID  string `json:"session_id"`
+	Provider   string `json:"provider"`
+	Workdir    string `json:"workdir"`
+	Text       string `json:"text,omitempty"`
+	Target     string `json:"target,omitempty"`
+	ToolName   string `json:"tool_name,omitempty"`
+	ArgsJSON   string `json:"arguments_json,omitempty"`
+	ToolUseID  string `json:"tool_use_id,omitempty"`
+	Output     string `json:"output,omitempty"`
+	IsError    bool   `json:"is_error,omitempty"`
+	Question   string `json:"question,omitempty"`
+	PromptID   string `json:"prompt_id,omitempty"`
+	Reply      string `json:"reply,omitempty"`
+	FullText   string `json:"full_text,omitempty"`
+	PromptTok  int    `json:"prompt_tokens,omitempty"`
+	CompleteTok int   `json:"completion_tokens,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Code       string `json:"code,omitempty"`
+}
+
 func parseOpenClaudeStartFlags(args []string) (session.OpenClaudeStartOptions, error) {
 	var opts session.OpenClaudeStartOptions
 	for i := 0; i < len(args); i++ {
@@ -969,6 +1465,81 @@ func parseOpenClaudeChatFlags(args []string) (openClaudeChatCLIOptions, error) {
 	return opts, nil
 }
 
+func parseOpenClaudeRunFlags(args []string) (openClaudeRunCLIOptions, error) {
+	opts := openClaudeRunCLIOptions{
+		Provider:      "firecracker",
+		ListenAddress: "127.0.0.1:50052",
+		RepoPath:      os.Getenv("AIR_OPENCLAUDE_REPO"),
+		GuestRepoPath: os.Getenv("AIR_OPENCLAUDE_GUEST_REPO"),
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--provider":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeRunCLIOptions{}, errors.New("provider must not be empty")
+			}
+			opts.Provider = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--provider="):
+			opts.Provider = strings.TrimPrefix(arg, "--provider=")
+			if opts.Provider == "" {
+				return openClaudeRunCLIOptions{}, errors.New("provider must not be empty")
+			}
+		case arg == "--workspace":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeRunCLIOptions{}, errors.New("workspace must not be empty")
+			}
+			opts.WorkspacePath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--workspace="):
+			opts.WorkspacePath = strings.TrimPrefix(arg, "--workspace=")
+			if opts.WorkspacePath == "" {
+				return openClaudeRunCLIOptions{}, errors.New("workspace must not be empty")
+			}
+		case arg == "--repo":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeRunCLIOptions{}, errors.New("repo must not be empty")
+			}
+			opts.RepoPath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--repo="):
+			opts.RepoPath = strings.TrimPrefix(arg, "--repo=")
+			if opts.RepoPath == "" {
+				return openClaudeRunCLIOptions{}, errors.New("repo must not be empty")
+			}
+		case arg == "--guest-repo":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeRunCLIOptions{}, errors.New("guest-repo must not be empty")
+			}
+			opts.GuestRepoPath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--guest-repo="):
+			opts.GuestRepoPath = strings.TrimPrefix(arg, "--guest-repo=")
+			if opts.GuestRepoPath == "" {
+				return openClaudeRunCLIOptions{}, errors.New("guest-repo must not be empty")
+			}
+		case arg == "--listen":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeRunCLIOptions{}, errors.New("listen must not be empty")
+			}
+			opts.ListenAddress = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--listen="):
+			opts.ListenAddress = strings.TrimPrefix(arg, "--listen=")
+			if opts.ListenAddress == "" {
+				return openClaudeRunCLIOptions{}, errors.New("listen must not be empty")
+			}
+		default:
+			return openClaudeRunCLIOptions{}, fmt.Errorf("unknown openclaude run flag: %s", arg)
+		}
+	}
+	if opts.RepoPath == "" {
+		return openClaudeRunCLIOptions{}, errors.New("openclaude repo path is required; use --repo or AIR_OPENCLAUDE_REPO")
+	}
+	return opts, nil
+}
+
 func runOpenClaudeChat(ctx context.Context, manager *session.Manager, opts openClaudeChatCLIOptions) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -991,6 +1562,12 @@ func runOpenClaudeChat(ctx context.Context, manager *session.Manager, opts openC
 		stop()
 		<-forwardErrCh
 		return err
+	}
+
+	if err := waitForLocalTCPReady(ctx, opts.ListenAddress, 10*time.Second); err != nil {
+		stop()
+		<-forwardErrCh
+		return fmt.Errorf("openclaude forward did not become ready on %s: %w", opts.ListenAddress, err)
 	}
 
 	scriptPath, err := writeOpenClaudeChatScript(opts.CLIRepoPath)
@@ -1029,6 +1606,49 @@ func runOpenClaudeChat(ctx context.Context, manager *session.Manager, opts openC
 	return nil
 }
 
+func waitForLocalTCPReady(ctx context.Context, address string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		conn, err := dialer.DialContext(ctx, "tcp", address)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+		time.Sleep(100 * time.Millisecond)
+	}
+	if lastErr == nil {
+		lastErr = os.ErrDeadlineExceeded
+	}
+	return lastErr
+}
+
+func runOpenClaudeOneCommand(ctx context.Context, manager *session.Manager, opts openClaudeRunCLIOptions) error {
+	started, err := manager.StartOpenClaude(session.OpenClaudeStartOptions{
+		Provider:      opts.Provider,
+		RepoPath:      opts.RepoPath,
+		GuestRepoPath: opts.GuestRepoPath,
+		WorkspacePath: opts.WorkspacePath,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "air: created session %s provider=%s\n", started.SessionID, started.Provider)
+	return runOpenClaudeChat(ctx, manager, openClaudeChatCLIOptions{
+		SessionID:     started.SessionID,
+		ListenAddress: opts.ListenAddress,
+		CLIRepoPath:   opts.RepoPath,
+	})
+}
+
 func writeOpenClaudeChatScript(repoPath string) (string, error) {
 	dir := os.TempDir()
 	f, err := os.CreateTemp(dir, "air-openclaude-chat-*.mjs")
@@ -1048,6 +1668,61 @@ func splitListenAddress(address string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid listen address: %s", address)
 	}
 	return host, port, nil
+}
+
+func replayOpenClaudeChat(manager *session.Manager, sessionID string, out io.Writer) error {
+	inspect, err := manager.Inspect(sessionID)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(inspect.Runtime.RootPath, "openclaude-chat-transcript.jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	const maxJSONLLine = 1024 * 1024
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, maxJSONLLine)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var event openClaudeTranscriptEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return fmt.Errorf("parse transcript line: %w", err)
+		}
+		renderOpenClaudeTranscriptEvent(out, &event)
+	}
+	return scanner.Err()
+}
+
+func renderOpenClaudeTranscriptEvent(out io.Writer, event *openClaudeTranscriptEvent) {
+	switch event.Event {
+	case "session_start":
+		fmt.Fprintf(out, "[%s] session_start provider=%s session=%s workdir=%s target=%s\n", event.Timestamp, event.Provider, event.SessionID, event.Workdir, event.Target)
+	case "user_message":
+		fmt.Fprintf(out, "[%s] user> %s\n", event.Timestamp, event.Text)
+	case "assistant_text_chunk":
+		fmt.Fprintf(out, "[%s] assistant.chunk %s\n", event.Timestamp, event.Text)
+	case "tool_start":
+		fmt.Fprintf(out, "[%s] tool.start %s %s\n", event.Timestamp, event.ToolName, event.ArgsJSON)
+	case "tool_result":
+		fmt.Fprintf(out, "[%s] tool.result %s error=%t %s\n", event.Timestamp, event.ToolName, event.IsError, event.Output)
+	case "approval_response":
+		fmt.Fprintf(out, "[%s] approval %s => %s\n", event.Timestamp, event.Question, event.Reply)
+	case "assistant_done":
+		fmt.Fprintf(out, "[%s] assistant.done prompt_tokens=%d completion_tokens=%d %s\n", event.Timestamp, event.PromptTok, event.CompleteTok, event.FullText)
+	case "server_error":
+		fmt.Fprintf(out, "[%s] server.error code=%s %s\n", event.Timestamp, event.Code, event.Message)
+	case "stream_error":
+		fmt.Fprintf(out, "[%s] stream.error %s\n", event.Timestamp, event.Message)
+	case "user_exit":
+		fmt.Fprintf(out, "[%s] user.exit %s\n", event.Timestamp, event.Text)
+	default:
+		fmt.Fprintf(out, "[%s] %s\n", event.Timestamp, event.Event)
+	}
 }
 
 const openClaudeChatScript = `import * as grpc from '@grpc/grpc-js'
@@ -1112,6 +1787,7 @@ async function main() {
 
   let call = null
   let textStreamed = false
+  let awaitingReply = false
 
   const promptLabel = '\x1b[36mair:openclaude@' + sessionId + '\x1b[0m'
   const approveLabel = '\x1b[33mair:approve@' + sessionId + '\x1b[0m'
@@ -1126,9 +1802,10 @@ async function main() {
       process.exit(0)
     }
     appendTranscript('user_message', { text: message })
-    if (!call || call.destroyed) {
+    if (!call || call.destroyed || call.writableEnded) {
       startStream()
     }
+    awaitingReply = true
     call.write({
       request: {
         session_id: sessionId,
@@ -1196,26 +1873,45 @@ async function main() {
           process.stdout.write(serverMessage.done.full_text)
         }
         textStreamed = false
+        awaitingReply = false
         appendTranscript('assistant_done', {
           full_text: serverMessage.done.full_text || '',
           prompt_tokens: serverMessage.done.prompt_tokens || 0,
           completion_tokens: serverMessage.done.completion_tokens || 0,
         })
         console.log('\n\x1b[32m[Done]\x1b[0m')
+        if (call) {
+          call.end()
+          call = null
+        }
         promptUser()
         return
       }
       if (serverMessage.error) {
+        awaitingReply = false
         console.error('\n\x1b[31m[Server Error]\x1b[0m ' + serverMessage.error.message)
         appendTranscript('server_error', {
           message: serverMessage.error.message,
           code: serverMessage.error.code || '',
         })
+        if (call) {
+          call.end()
+          call = null
+        }
         promptUser()
       }
     })
 
+    call.on('end', () => {
+      call = null
+    })
+
     call.on('error', (err) => {
+      call = null
+      if (!awaitingReply) {
+        return
+      }
+      awaitingReply = false
       console.error('\n\x1b[31m[Stream Error]\x1b[0m', err.message)
       appendTranscript('stream_error', { message: err.message })
       promptUser()

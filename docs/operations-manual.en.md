@@ -290,12 +290,31 @@ For agent-facing usage, continue with:
 - [OpenClaude Integration](openclaude-integration.en.md)
 - [LLM Acceptance Results](llm-acceptance-results.en.md)
 
-The shortest host-side text entry point is:
+The recommended first-use entry point is:
+
+```bash
+air chat
+```
+
+It interactively prepares the missing runtime dependencies and configuration, then enters chat directly.
+The first saved model settings are persisted to `~/.config/air/chat.json`.
+To force model setup again, run `air chat --reconfigure`.
+
+If you already prepared the OpenClaude runtime manually and only want the old direct path, the shortest host-side text entry point is:
 
 ```bash
 AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
 air agent openclaude chat <session_id>
 ```
+
+If you want to keep using the older one-command direct path, use:
+
+```bash
+AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
+air agent openclaude run --provider firecracker --workspace /path/to/repo --guest-repo /opt/openclaude
+```
+
+If you use DeepSeek or another OpenAI-compatible provider on `firecracker`, you no longer need to set `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` manually; AIR injects the guest proxy defaults automatically.
 
 Once started, AIR shows:
 
@@ -307,4 +326,10 @@ The current transcript file is:
 
 ```text
 runtime/sessions/<provider>/<session_id>/openclaude-chat-transcript.jsonl
+```
+
+You can replay it directly with:
+
+```bash
+air agent openclaude replay <session_id>
 ```

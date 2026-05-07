@@ -193,11 +193,38 @@ air agent openclaude chat "$session_id"
 - Web UI 展示
 - LLM 验收归档
 
+当前已增加最小回放入口：
+
+```bash
+air agent openclaude replay <session_id>
+```
+
+它会读取 session runtime 目录下的 `openclaude-chat-transcript.jsonl`，按事件流回放用户消息、工具调用、工具结果和最终回复。
+
+如果你希望进一步简化成“一条命令完成创建 session + 启动 OpenClaude + 进入文字交互”，可直接：
+
+```bash
+AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
+air agent openclaude run --provider firecracker --workspace /path/to/repo --guest-repo /opt/openclaude
+```
+
+这是当前推荐给终端用户的最短路径。
+
+如果是首次使用，更推荐直接执行：
+
+```bash
+air chat
+```
+
+在 `linux/amd64` 上，`air chat` 会优先尝试下载 AIR 官方 OpenClaude host bundle；如果该路径暂时不可用，或者当前架构还没有官方 bundle，再回退到源码下载和 `bun install`。
+
 前提：
 
 - `--repo` 指向的 OpenClaude 目录已经完成 `bun install`
 - 当前环境里已经准备好 OpenClaude 需要的 provider 变量
 - 例如走 DeepSeek / OpenAI-compatible 路线时，需要先设置 `CLAUDE_CODE_USE_OPENAI=1`、`OPENAI_BASE_URL`、`OPENAI_MODEL`、`OPENAI_API_KEY`
+- 在 `firecracker` provider 下，AIR 现在会默认自动注入 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY=http://127.0.0.1:18080`，用于 guest 内模型出网
+- 如果宿主机环境里已经带了 `127.0.0.1` / `localhost` 这类本地代理变量，AIR 也会在 `firecracker` 模式下自动改写成 guest 内可用的 `127.0.0.1:18080`
 
 如果目标是 Firecracker guest，而不是 `local` provider，当前推荐直接构建一个较新的 Alpine guest rootfs，而不是继续在官方 demo rootfs 上硬塞 Bun：
 

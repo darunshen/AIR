@@ -694,6 +694,79 @@ func TestRenderOpenClaudeStartCommandIncludesWhitelistedEnv(t *testing.T) {
 	}
 }
 
+func TestApplyOpenClaudeRuntimeEnvAddsFirecrackerProxyDefaults(t *testing.T) {
+	t.Helper()
+
+	env := applyOpenClaudeRuntimeEnv("firecracker", map[string]string{
+		"OPENAI_API_KEY": "sk-test",
+	})
+	if env["HTTP_PROXY"] != "http://127.0.0.1:18080" {
+		t.Fatalf("expected HTTP_PROXY default, got %+v", env)
+	}
+	if env["HTTPS_PROXY"] != "http://127.0.0.1:18080" {
+		t.Fatalf("expected HTTPS_PROXY default, got %+v", env)
+	}
+	if env["ALL_PROXY"] != "http://127.0.0.1:18080" {
+		t.Fatalf("expected ALL_PROXY default, got %+v", env)
+	}
+}
+
+func TestApplyOpenClaudeRuntimeEnvPreservesExplicitProxy(t *testing.T) {
+	t.Helper()
+
+	env := applyOpenClaudeRuntimeEnv("firecracker", map[string]string{
+		"HTTP_PROXY": "http://custom-proxy:8080",
+	})
+	if env["HTTP_PROXY"] != "http://custom-proxy:8080" {
+		t.Fatalf("expected explicit HTTP_PROXY to be preserved, got %+v", env)
+	}
+}
+
+func TestApplyOpenClaudeRuntimeEnvRewritesLoopbackProxyForFirecracker(t *testing.T) {
+	t.Helper()
+
+	env := applyOpenClaudeRuntimeEnv("firecracker", map[string]string{
+		"HTTP_PROXY":  "http://127.0.0.1:3067/",
+		"HTTPS_PROXY": "http://localhost:3067/",
+		"ALL_PROXY":   "socks://127.0.0.1:3067/",
+	})
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"} {
+		if env[key] != "http://127.0.0.1:18080" {
+			t.Fatalf("expected %s to be rewritten to guest proxy, got %+v", key, env)
+		}
+	}
+}
+
+func TestApplyOpenClaudeRuntimeEnvStripsAnthropicEnvWhenUsingOpenAI(t *testing.T) {
+	t.Helper()
+
+	env := applyOpenClaudeRuntimeEnv("firecracker", map[string]string{
+		"CLAUDE_CODE_USE_OPENAI": "1",
+		"OPENAI_API_KEY":         "sk-openai",
+		"ANTHROPIC_API_KEY":      "sk-anthropic",
+		"ANTHROPIC_BASE_URL":     "https://api.routeai.cc",
+	})
+	if _, ok := env["ANTHROPIC_API_KEY"]; ok {
+		t.Fatalf("expected ANTHROPIC_API_KEY to be stripped, got %+v", env)
+	}
+	if _, ok := env["ANTHROPIC_BASE_URL"]; ok {
+		t.Fatalf("expected ANTHROPIC_BASE_URL to be stripped, got %+v", env)
+	}
+	if env["OPENAI_API_KEY"] != "sk-openai" {
+		t.Fatalf("expected OPENAI_API_KEY to be preserved, got %+v", env)
+	}
+}
+
+func TestOpenClaudeStateDirForFirecrackerUsesWorkspace(t *testing.T) {
+	t.Helper()
+
+	got := openClaudeStateDirForProvider("firecracker", "/opt/openclaude", "sess_123")
+	want := "/workspace/.air/openclaude/sess_123"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
 func TestDeleteStopsManagedOpenClaudeProcess(t *testing.T) {
 	t.Helper()
 

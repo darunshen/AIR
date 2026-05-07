@@ -126,9 +126,14 @@ The current recommended asset strategy is:
 If you installed AIR from `.deb`, the package contains the CLI, but not the Firecracker binary, kernel, or rootfs assets. Run:
 
 ```bash
-air init firecracker
-air doctor --provider firecracker --human
+air chat
 ```
+
+`air chat` now acts as the first-run entry point:
+
+- it can prompt to download the official AIR Firecracker bundle
+- on `linux/amd64`, it can prompt to download the official AIR OpenClaude host bundle
+- it collects model configuration interactively before entering chat
 
 ### What Is Already Done
 

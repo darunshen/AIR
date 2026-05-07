@@ -69,11 +69,23 @@ jobs:
       - name: Install packaging tools
         run: sudo apt-get update && sudo apt-get install -y dpkg-dev zip e2fsprogs
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Prepare OpenClaude runtime
+        run: |
+          git clone --depth=1 https://github.com/Gitlawb/openclaude.git /tmp/openclaude
+          cd /tmp/openclaude
+          bun install
+
       - name: Build release artifacts
         env:
           VERSION: ${{ github.event.inputs.version || github.ref_name }}
           COMMIT: ${{ github.sha }}
           BUILD_DATE: ${{ github.run_id }}
+          AIR_OPENCLAUDE_REPO: /tmp/openclaude
         run: |
           export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           ./scripts/build-release-artifacts.sh dist

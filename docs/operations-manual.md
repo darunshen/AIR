@@ -291,12 +291,31 @@ runtime/sessions/firecracker/<session_id>/
 - [OpenClaude 接入方案](openclaude-integration.md)
 - [LLM 验收结果](llm-acceptance-results.md)
 
-最短的 host 侧文字入口是：
+当前推荐的首次使用入口是：
+
+```bash
+air chat
+```
+
+它会交互式补齐首次运行所需依赖和配置，然后直接进入聊天。
+首次录入的模型配置会保存到 `~/.config/air/chat.json`。
+如果要强制重新录入模型配置，可执行 `air chat --reconfigure`。
+
+如果你已经手工准备好了 OpenClaude runtime，并且只想走旧的直接入口，最短的 host 侧文字入口是：
 
 ```bash
 AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
 air agent openclaude chat <session_id>
 ```
+
+如果希望继续使用旧的一条命令直连入口，直接用：
+
+```bash
+AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
+air agent openclaude run --provider firecracker --workspace /path/to/repo --guest-repo /opt/openclaude
+```
+
+如果你使用 DeepSeek / OpenAI-compatible provider，在 `firecracker` 模式下不需要再手工设置 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`；AIR 会自动注入 guest 代理变量。
 
 进入后会显示：
 
@@ -308,4 +327,10 @@ air agent openclaude chat <session_id>
 
 ```text
 runtime/sessions/<provider>/<session_id>/openclaude-chat-transcript.jsonl
+```
+
+可直接回放：
+
+```bash
+air agent openclaude replay <session_id>
 ```

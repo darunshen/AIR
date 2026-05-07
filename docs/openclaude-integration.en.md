@@ -187,11 +187,38 @@ The transcript is now structured as JSONL, which makes it directly reusable for:
 - Web UI rendering
 - LLM acceptance archival
 
+AIR now also provides a minimal replay entry point:
+
+```bash
+air agent openclaude replay <session_id>
+```
+
+It reads `openclaude-chat-transcript.jsonl` from the session runtime directory and replays the user messages, tool calls, tool results, and final responses as an event stream.
+
+If you want the next step in simplification, AIR now also provides a one-command entry point that creates a session, starts OpenClaude, and immediately enters the host text frontend:
+
+```bash
+AIR_OPENCLAUDE_REPO=~/Documents/code/openclaude \
+air agent openclaude run --provider firecracker --workspace /path/to/repo --guest-repo /opt/openclaude
+```
+
+This is now the recommended shortest path for end users.
+
+For first-time use, the better default entry point is now:
+
+```bash
+air chat
+```
+
+On `linux/amd64`, `air chat` prefers downloading the official AIR OpenClaude host bundle first. If that path is not available, or if the current architecture does not have an official bundle yet, it falls back to source download plus `bun install`.
+
 Prerequisites:
 
 - the OpenClaude repo pointed to by `--repo` has already completed `bun install`
 - the current environment already contains the provider variables OpenClaude needs
 - for a DeepSeek / OpenAI-compatible path, that typically means `CLAUDE_CODE_USE_OPENAI=1`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, and `OPENAI_API_KEY`
+- on the `firecracker` provider, AIR now automatically injects `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY=http://127.0.0.1:18080` so guest-side model traffic can egress through the host proxy path
+- if the host shell already exports a loopback proxy such as `127.0.0.1` or `localhost`, AIR also rewrites that value to the guest-usable `127.0.0.1:18080` path when running on `firecracker`
 
 If the target is a Firecracker guest rather than the `local` provider, the recommended path is now to build a newer Alpine-based guest rootfs instead of forcing Bun onto the old demo rootfs:
 

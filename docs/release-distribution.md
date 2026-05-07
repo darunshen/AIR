@@ -26,6 +26,7 @@
 
 - `air_<version>_linux_amd64.tar.gz`
 - `air_<version>_linux_arm64.tar.gz`
+- `air_openclaude_linux_amd64.tar.gz`
 - `air_firecracker_linux_amd64.tar.gz`
 - `air_firecracker_linux_arm64.tar.gz`
 - `air_<version>_darwin_amd64.tar.gz`
@@ -88,9 +89,10 @@ BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 1. 跑 `go test ./...`
 2. 如果仓库配置了 `DEEPSEEK_API_KEY` secret，复用 `llm-acceptance` workflow 跑真实 LLM 验收
 3. 构建跨平台归档
-4. 构建 Linux `.deb`
-5. 生成 apt 仓库目录压缩包
-6. 上传到 GitHub Release
+4. 构建 OpenClaude host runtime bundle
+5. 构建 Linux `.deb`
+6. 生成 apt 仓库目录压缩包
+7. 上传到 GitHub Release
 
 ## 5. `.deb` 安装
 
@@ -107,15 +109,28 @@ sudo dpkg -i air_<version>_amd64.deb
 - `/usr/share/doc/air/README.md`
 - `/usr/share/doc/air/LICENSE`
 
-当前 `.deb` 不包含：
+安装后推荐直接执行：
 
-- `firecracker` 二进制
-- `vmlinux`
-- `rootfs.ext4`
+```bash
+air chat
+```
 
-因此这个 `.deb` 目前是 AIR CLI 包，不是“安装后立即可跑 Firecracker”的完整运行时包。
+`air chat` 会交互地完成首次运行准备：
 
-安装后如果要检查 Firecracker 依赖，执行：
+- 选择 `local` 或 `firecracker`
+- 如果缺少 Firecracker 资产，提示是否下载 AIR 官方 bundle
+- 如果缺少 OpenClaude host 运行目录，在 `linux/amd64` 上优先提示下载 AIR 官方 OpenClaude bundle；其他架构或下载失败时回退到源码下载并执行 `bun install`
+- 如果缺少模型配置，提示录入 `OPENAI_BASE_URL`、`OPENAI_MODEL`、`OPENAI_API_KEY`
+- 首次录入的模型配置会保存到 `~/.config/air/chat.json`
+- 准备完成后直接进入 AI 对话
+
+如果后续需要切换模型、切换 key 或强制重配，可执行：
+
+```bash
+air chat --reconfigure
+```
+
+如果你只想单独检查 Firecracker 依赖，也可以执行：
 
 ```bash
 air init firecracker
