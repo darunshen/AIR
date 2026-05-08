@@ -90,6 +90,16 @@ jobs:
           export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           ./scripts/build-release-artifacts.sh dist
 
+      - name: Verify release artifacts
+        run: |
+          test -f dist/air_openclaude_linux_amd64.tar.gz
+          test -f dist/air_openclaude_firecracker_linux_amd64.tar.gz
+          test -f dist/air_openclaude_firecracker_linux_arm64.tar.gz
+          test -f dist/checksums.txt
+          grep 'air_openclaude_linux_amd64.tar.gz' dist/checksums.txt
+          grep 'air_openclaude_firecracker_linux_amd64.tar.gz' dist/checksums.txt
+          grep 'air_openclaude_firecracker_linux_arm64.tar.gz' dist/checksums.txt
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:

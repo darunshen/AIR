@@ -216,7 +216,13 @@ air agent openclaude run --provider firecracker --workspace /path/to/repo --gues
 air chat
 ```
 
-在 `linux/amd64` 上，`air chat` 会优先尝试下载 AIR 官方 OpenClaude host bundle；如果该路径暂时不可用，或者当前架构还没有官方 bundle，再回退到源码下载和 `bun install`。
+在 `firecracker` 模式下，`air chat` 会按需交互准备：
+
+- AIR 官方 Firecracker bundle
+- AIR 官方 OpenClaude Firecracker guest rootfs bundle
+- AIR 官方 OpenClaude host bundle（当前优先支持 `linux/amd64`）
+
+其中 host bundle 如果暂时不可用，或者当前架构还没有官方 bundle，AIR 会自动回退到源码下载和 `bun install`。
 
 前提：
 

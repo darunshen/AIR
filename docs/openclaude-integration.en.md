@@ -210,7 +210,13 @@ For first-time use, the better default entry point is now:
 air chat
 ```
 
-On `linux/amd64`, `air chat` prefers downloading the official AIR OpenClaude host bundle first. If that path is not available, or if the current architecture does not have an official bundle yet, it falls back to source download plus `bun install`.
+On `firecracker`, `air chat` can now prepare the missing runtime pieces interactively:
+
+- the AIR official Firecracker bundle
+- the AIR official OpenClaude Firecracker guest rootfs bundle
+- the AIR official OpenClaude host bundle (currently prioritized on `linux/amd64`)
+
+If the host bundle path is unavailable, or if the current architecture does not have an official bundle yet, AIR falls back to source download plus `bun install`.
 
 Prerequisites:
 
