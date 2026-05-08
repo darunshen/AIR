@@ -35,6 +35,7 @@
 - [Firecracker 真机部署指南](firecracker-deployment-guide.md) | [English](firecracker-deployment-guide.en.md)
 - [操作手册](operations-manual.md) | [English](operations-manual.en.md)
 - [发布与安装包交付](release-distribution.md) | [English](release-distribution.en.md)
+- [`air chat` 真机验收记录](air-chat-acceptance.md) | [English](air-chat-acceptance.en.md)
 - [LLM 验收结果](llm-acceptance-results.md) | [English](llm-acceptance-results.en.md)
 
 ## Historical

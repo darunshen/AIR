@@ -35,6 +35,7 @@ Document status tiers:
 - [Firecracker Deployment Guide](firecracker-deployment-guide.en.md) | [中文](firecracker-deployment-guide.md)
 - [Operations Manual](operations-manual.en.md) | [中文](operations-manual.md)
 - [Release And Distribution](release-distribution.en.md) | [中文](release-distribution.md)
+- [`air chat` Real-Machine Acceptance Record](air-chat-acceptance.en.md) | [中文](air-chat-acceptance.md)
 - [LLM Acceptance Results](llm-acceptance-results.en.md) | [中文](llm-acceptance-results.md)
 
 ## Historical
