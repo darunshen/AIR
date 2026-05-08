@@ -188,6 +188,29 @@ func extractTarGz(reader io.Reader, outputDir string) error {
 			if err := file.Close(); err != nil {
 				return err
 			}
+		case tar.TypeLink:
+			linkTarget := filepath.Join(outputDir, header.Linkname)
+			if !strings.HasPrefix(filepath.Clean(linkTarget), filepath.Clean(outputDir)+string(os.PathSeparator)) &&
+				filepath.Clean(linkTarget) != filepath.Clean(outputDir) {
+				return fmt.Errorf("invalid archive hardlink path: %s", header.Linkname)
+			}
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return err
+			}
+			if err := os.Link(linkTarget, targetPath); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			linkTarget := filepath.Clean(header.Linkname)
+			if filepath.IsAbs(linkTarget) {
+				return fmt.Errorf("invalid archive symlink path: %s", header.Linkname)
+			}
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(linkTarget, targetPath); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unsupported archive entry type: %d", header.Typeflag)
 		}

@@ -629,7 +629,7 @@ func installOfficialFirecrackerBundle(outputDir string) error {
 	return nil
 }
 
-func runChatWizard(ctx context.Context, manager *session.Manager, opts chatCLIOptions) error {
+func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions) error {
 	if !isInteractiveTerminal(os.Stdin) {
 		return errors.New("air chat requires an interactive terminal")
 	}
@@ -676,7 +676,11 @@ func runChatWizard(ctx context.Context, manager *session.Manager, opts chatCLIOp
 		GuestRepoPath: "/opt/openclaude",
 		ListenAddress: opts.ListenAddress,
 	}
-	return runOpenClaudeOneCommand(ctx, manager, runOpts)
+	refreshedManager, err := session.NewManager()
+	if err != nil {
+		return err
+	}
+	return runOpenClaudeOneCommand(ctx, refreshedManager, runOpts)
 }
 
 func ensureOpenClaudeCLIRepo() (string, error) {
@@ -704,6 +708,9 @@ func ensureOpenClaudeCLIRepo() (string, error) {
 	fmt.Fprintln(os.Stdout, "优先尝试下载 AIR 官方 OpenClaude bundle...")
 	if err := installOfficialOpenClaudeBundle(defaultRepo); err != nil {
 		fmt.Fprintf(os.Stdout, "官方 bundle 下载失败，回退到源码安装路径：%v\n", err)
+		if removeErr := os.RemoveAll(defaultRepo); removeErr != nil {
+			return "", fmt.Errorf("cleanup failed after official bundle install error: %w", removeErr)
+		}
 		if err := installOpenClaudeRepoFromSource(defaultRepo); err != nil {
 			return "", err
 		}
@@ -804,7 +811,8 @@ func installOfficialOpenClaudeBundle(repoPath string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "installed official OpenClaude runtime to %s\n", installedDir)
-	return validateOpenClaudeRepo(installedDir)
+	_, err = resolveOpenClaudeRepo(installedDir)
+	return err
 }
 
 func installOfficialOpenClaudeGuestBundle(outputDir string) (string, error) {
