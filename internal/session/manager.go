@@ -70,7 +70,7 @@ type Manager struct {
 }
 
 func NewManager() (*Manager, error) {
-	return NewManagerWithPaths("data/sessions.json", "runtime/sessions")
+	return NewManagerWithPaths("runtime/sessions/store.json", "runtime/sessions")
 }
 
 func NewManagerWithPaths(storePath, runtimeRoot string) (*Manager, error) {

@@ -1,9 +1,10 @@
 .codex
 runtime/
 artifacts/
-air
+/air
 *.test
 *.test.exe
 assets/firecracker/
 dist/
 tmp/
+data/sessions.json

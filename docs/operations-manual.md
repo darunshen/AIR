@@ -129,7 +129,7 @@ air session inspect <session_id>
 说明：
 
 - `list` / `inspect` 会结合当前 runtime 实况刷新状态
-- 它们不只是读取 `data/sessions.json` 的旧值
+- 它们不只是读取 `runtime/sessions/store.json` 的旧值
 
 ### 4.3 执行命令
 
