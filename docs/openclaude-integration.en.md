@@ -217,6 +217,8 @@ On `firecracker`, `air chat` can now prepare the missing runtime pieces interact
 - the AIR official OpenClaude host bundle (currently prioritized on `linux/amd64`)
 
 If the host bundle path is unavailable, or if the current architecture does not have an official bundle yet, AIR falls back to source download plus `bun install`.
+`air chat` now uses an ephemeral host loopback port instead of assuming a fixed `127.0.0.1:50052`, which avoids stale local listeners polluting the forward path.
+It also prints stage timing so startup latency can be attributed to preflight checks, Firecracker boot, or OpenClaude gRPC cold start.
 
 Prerequisites:
 

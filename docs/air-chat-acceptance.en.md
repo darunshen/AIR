@@ -47,7 +47,7 @@ The run successfully reached:
 ```text
 AIR OpenClaude Chat
 provider=firecracker session=sess_748ef6b0f627bd88 workdir=/workspace
-Connected to 127.0.0.1:50052. Type /exit to quit.
+Connected to 127.0.0.1:<ephemeral-port>. Type /exit to quit.
 air:openclaude@sess_748ef6b0f627bd88>
 ```
 
@@ -56,6 +56,8 @@ It also produced a transcript:
 ```text
 /tmp/air-chat-home5/workspace/runtime/sessions/firecracker/sess_748ef6b0f627bd88/openclaude-chat-transcript.jsonl
 ```
+
+In the current implementation, `air chat` allocates an ephemeral host loopback port for the local forward path by default, and prints stage timing such as `firecracker session + openclaude ready in 42.86s` so cold-start latency is directly visible.
 
 ## 4. Issues Found And Fixed During This Run
 

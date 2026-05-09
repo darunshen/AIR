@@ -301,6 +301,8 @@ air chat
 在 `firecracker` 模式下，这一步会按需提示下载 AIR 官方 Firecracker bundle、AIR 官方 OpenClaude Firecracker guest rootfs bundle，以及 AIR 官方 OpenClaude host bundle（当前仅 `linux/amd64`）。
 首次录入的模型配置会保存到 `~/.config/air/chat.json`。
 如果要强制重新录入模型配置，可执行 `air chat --reconfigure`。
+`air chat` 默认使用动态分配的 host 本地回环端口，不再依赖固定 `127.0.0.1:50052`。
+启动时会打印分阶段耗时，便于定位是前置检查慢，还是 Firecracker / OpenClaude 冷启动慢。
 
 如果你已经手工准备好了 OpenClaude runtime，并且只想走旧的直接入口，最短的 host 侧文字入口是：
 

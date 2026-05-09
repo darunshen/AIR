@@ -136,6 +136,8 @@ air chat
 - it can prompt to download the official AIR OpenClaude Firecracker guest rootfs bundle
 - on `linux/amd64`, it can prompt to download the official AIR OpenClaude host bundle
 - it collects model configuration interactively before entering chat
+- it uses an ephemeral host-side loopback port by default instead of assuming a fixed `127.0.0.1:50052`
+- it prints startup timing so users can distinguish preflight checks from guest and OpenClaude cold-start time
 
 ### What Is Already Done
 
@@ -299,6 +301,8 @@ air chat
 - AIR 官方 Firecracker bundle
 - AIR 官方 OpenClaude Firecracker guest rootfs bundle
 - AIR 官方 OpenClaude host bundle（当前仅 `linux/amd64`）
+- 默认使用动态分配的 host 本地回环端口，不再假设固定 `127.0.0.1:50052`
+- 会打印启动阶段耗时，便于区分前置检查与 guest / OpenClaude 冷启动耗时
 
 如果你只想单独准备或检查 Firecracker 资产，也可以执行：
 

@@ -418,9 +418,13 @@ type chatCLIOptions struct {
 }
 
 type chatProfile struct {
-	OpenAIBaseURL string `json:"openai_base_url"`
-	OpenAIModel   string `json:"openai_model"`
-	OpenAIAPIKey  string `json:"openai_api_key"`
+	ProviderMode      string `json:"provider_mode,omitempty"`
+	OpenAIBaseURL     string `json:"openai_base_url,omitempty"`
+	OpenAIModel       string `json:"openai_model,omitempty"`
+	OpenAIAPIKey      string `json:"openai_api_key,omitempty"`
+	AnthropicBaseURL  string `json:"anthropic_base_url,omitempty"`
+	AnthropicAuthToken string `json:"anthropic_auth_token,omitempty"`
+	AnthropicModel    string `json:"anthropic_model,omitempty"`
 }
 
 func parseDoctorFlags(args []string) (doctorCLIOptions, error) {
@@ -486,7 +490,7 @@ func parseInitFirecrackerFlags(args []string) (initFirecrackerCLIOptions, error)
 func parseChatFlags(args []string) (chatCLIOptions, error) {
 	opts := chatCLIOptions{
 		Provider:      "firecracker",
-		ListenAddress: "127.0.0.1:50052",
+		ListenAddress: "127.0.0.1:0",
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -534,11 +538,6 @@ func parseChatFlags(args []string) (chatCLIOptions, error) {
 	case "local", "firecracker":
 	default:
 		return chatCLIOptions{}, fmt.Errorf("unsupported provider: %s", opts.Provider)
-	}
-	if opts.WorkspacePath == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			opts.WorkspacePath = cwd
-		}
 	}
 	return opts, nil
 }
@@ -633,6 +632,7 @@ func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions)
 	if !isInteractiveTerminal(os.Stdin) {
 		return errors.New("air chat requires an interactive terminal")
 	}
+	chatStartedAt := time.Now()
 
 	provider := opts.Provider
 	if provider == "" {
@@ -640,6 +640,8 @@ func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions)
 	}
 
 	if provider == "firecracker" {
+		fmt.Fprintln(os.Stdout, "air: checking firecracker runtime...")
+		doctorStartedAt := time.Now()
 		cfg := vm.ResolveConfig("runtime/sessions")
 		cfg.Provider = "firecracker"
 		report := vm.Diagnose(cfg)
@@ -656,18 +658,34 @@ func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions)
 				return err
 			}
 		}
+		fmt.Fprintf(os.Stdout, "air: firecracker runtime check completed in %s\n", formatStepDuration(time.Since(doctorStartedAt)))
+		fmt.Fprintln(os.Stdout, "air: ensuring OpenClaude guest image...")
+		guestImageStartedAt := time.Now()
 		if err := ensureOpenClaudeGuestRootfsInteractive(); err != nil {
 			return err
 		}
+		fmt.Fprintf(os.Stdout, "air: OpenClaude guest image ready in %s\n", formatStepDuration(time.Since(guestImageStartedAt)))
 	}
 
+	fmt.Fprintln(os.Stdout, "air: ensuring OpenClaude host runtime...")
+	hostRuntimeStartedAt := time.Now()
 	repoPath, err := ensureOpenClaudeCLIRepo()
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(os.Stdout, "air: OpenClaude host runtime ready in %s\n", formatStepDuration(time.Since(hostRuntimeStartedAt)))
+	fmt.Fprintln(os.Stdout, "air: ensuring model configuration...")
+	modelConfigStartedAt := time.Now()
 	if err := ensureProviderEnvInteractive(opts.Reconfigure); err != nil {
 		return err
 	}
+	fmt.Fprintf(os.Stdout, "air: model configuration ready in %s\n", formatStepDuration(time.Since(modelConfigStartedAt)))
+	if opts.WorkspacePath == "" {
+		fmt.Fprintln(os.Stdout, "air: no workspace specified, starting chat without workspace injection")
+	} else {
+		fmt.Fprintf(os.Stdout, "air: using workspace %s\n", opts.WorkspacePath)
+	}
+	fmt.Fprintln(os.Stdout, "air: starting firecracker session and openclaude...")
 
 	runOpts := openClaudeRunCLIOptions{
 		Provider:      provider,
@@ -680,6 +698,7 @@ func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(os.Stdout, "air: pre-chat checks completed in %s\n", formatStepDuration(time.Since(chatStartedAt)))
 	return runOpenClaudeOneCommand(ctx, refreshedManager, runOpts)
 }
 
@@ -726,12 +745,14 @@ func ensureOpenClaudeCLIRepo() (string, error) {
 func ensureOpenClaudeGuestRootfsInteractive() error {
 	if value := os.Getenv("AIR_FIRECRACKER_ROOTFS"); value != "" {
 		if _, err := os.Stat(value); err == nil {
+			ensureOpenClaudeGuestBootArgs(value)
 			return nil
 		}
 	}
 
 	if resolved := vm.ResolveFirecrackerAsset("openclaude-alpine-rootfs.ext4"); resolved != "" {
 		_ = os.Setenv("AIR_FIRECRACKER_ROOTFS", resolved)
+		ensureOpenClaudeGuestBootArgs(resolved)
 		return nil
 	}
 
@@ -751,7 +772,18 @@ func ensureOpenClaudeGuestRootfsInteractive() error {
 	}
 	fmt.Fprintf(os.Stdout, "installed OpenClaude guest rootfs to %s\n", rootfsPath)
 	_ = os.Setenv("AIR_FIRECRACKER_ROOTFS", rootfsPath)
+	ensureOpenClaudeGuestBootArgs(rootfsPath)
 	return nil
+}
+
+func ensureOpenClaudeGuestBootArgs(rootfsPath string) {
+	if os.Getenv("AIR_FIRECRACKER_BOOT_ARGS") != "" {
+		return
+	}
+	if filepath.Base(rootfsPath) != "openclaude-alpine-rootfs.ext4" {
+		return
+	}
+	_ = os.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init")
 }
 
 func defaultOpenClaudeRepoPath() string {
@@ -936,68 +968,171 @@ func installHostBun() error {
 }
 
 func ensureProviderEnvInteractive(reconfigure bool) error {
-	if os.Getenv("OPENAI_API_KEY") != "" && os.Getenv("OPENAI_BASE_URL") != "" && os.Getenv("OPENAI_MODEL") != "" {
+	if hasCompleteOpenAIConfig() || hasCompleteAnthropicConfig() {
 		return nil
 	}
 	if !reconfigure {
 		profile, err := loadChatProfile()
 		if err == nil {
-			if os.Getenv("OPENAI_BASE_URL") == "" && profile.OpenAIBaseURL != "" {
-				_ = os.Setenv("OPENAI_BASE_URL", profile.OpenAIBaseURL)
-			}
-			if os.Getenv("OPENAI_MODEL") == "" && profile.OpenAIModel != "" {
-				_ = os.Setenv("OPENAI_MODEL", profile.OpenAIModel)
-			}
-			if os.Getenv("OPENAI_API_KEY") == "" && profile.OpenAIAPIKey != "" {
-				_ = os.Setenv("OPENAI_API_KEY", profile.OpenAIAPIKey)
-			}
-			_ = os.Setenv("CLAUDE_CODE_USE_OPENAI", "1")
+			applyChatProfileEnv(profile)
 		}
 	}
-	if os.Getenv("OPENAI_API_KEY") != "" && os.Getenv("OPENAI_BASE_URL") != "" && os.Getenv("OPENAI_MODEL") != "" {
+	if hasCompleteOpenAIConfig() || hasCompleteAnthropicConfig() {
 		return nil
 	}
 
 	fmt.Fprintln(os.Stdout, "当前未检测到完整的模型配置，将进入交互设置。")
 	reader := bufio.NewReader(os.Stdin)
-	defaultBaseURL := "https://api.deepseek.com/v1"
-	defaultModel := "deepseek-chat"
-	fmt.Fprintf(os.Stdout, "OpenAI-compatible Base URL [%s]: ", defaultBaseURL)
-	baseURL, err := reader.ReadString('\n')
+	mode, err := promptProviderMode(reader)
 	if err != nil {
 		return err
 	}
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		baseURL = defaultBaseURL
-	}
-	fmt.Fprintf(os.Stdout, "Model [%s]: ", defaultModel)
-	modelName, err := reader.ReadString('\n')
+	profile, err := promptChatProfile(reader, mode)
 	if err != nil {
 		return err
 	}
-	modelName = strings.TrimSpace(modelName)
-	if modelName == "" {
-		modelName = defaultModel
+	applyChatProfileEnv(profile)
+	return saveChatProfile(profile)
+}
+
+func hasCompleteOpenAIConfig() bool {
+	return os.Getenv("OPENAI_API_KEY") != "" && os.Getenv("OPENAI_BASE_URL") != "" && os.Getenv("OPENAI_MODEL") != ""
+}
+
+func hasCompleteAnthropicConfig() bool {
+	return os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" && os.Getenv("ANTHROPIC_BASE_URL") != "" && os.Getenv("ANTHROPIC_MODEL") != ""
+}
+
+func applyChatProfileEnv(profile *chatProfile) {
+	if profile == nil {
+		return
 	}
-	fmt.Fprint(os.Stdout, "API Key: ")
-	apiKey, err := reader.ReadString('\n')
+	switch profile.ProviderMode {
+	case "anthropic":
+		if os.Getenv("ANTHROPIC_BASE_URL") == "" && profile.AnthropicBaseURL != "" {
+			_ = os.Setenv("ANTHROPIC_BASE_URL", profile.AnthropicBaseURL)
+		}
+		if os.Getenv("ANTHROPIC_MODEL") == "" && profile.AnthropicModel != "" {
+			_ = os.Setenv("ANTHROPIC_MODEL", profile.AnthropicModel)
+		}
+		if os.Getenv("ANTHROPIC_AUTH_TOKEN") == "" && profile.AnthropicAuthToken != "" {
+			_ = os.Setenv("ANTHROPIC_AUTH_TOKEN", profile.AnthropicAuthToken)
+		}
+		_ = os.Unsetenv("CLAUDE_CODE_USE_OPENAI")
+		_ = os.Unsetenv("OPENAI_BASE_URL")
+		_ = os.Unsetenv("OPENAI_MODEL")
+		_ = os.Unsetenv("OPENAI_API_KEY")
+	default:
+		if os.Getenv("OPENAI_BASE_URL") == "" && profile.OpenAIBaseURL != "" {
+			_ = os.Setenv("OPENAI_BASE_URL", profile.OpenAIBaseURL)
+		}
+		if os.Getenv("OPENAI_MODEL") == "" && profile.OpenAIModel != "" {
+			_ = os.Setenv("OPENAI_MODEL", profile.OpenAIModel)
+		}
+		if os.Getenv("OPENAI_API_KEY") == "" && profile.OpenAIAPIKey != "" {
+			_ = os.Setenv("OPENAI_API_KEY", profile.OpenAIAPIKey)
+		}
+		_ = os.Setenv("CLAUDE_CODE_USE_OPENAI", "1")
+		_ = os.Unsetenv("ANTHROPIC_BASE_URL")
+		_ = os.Unsetenv("ANTHROPIC_MODEL")
+		_ = os.Unsetenv("ANTHROPIC_AUTH_TOKEN")
+	}
+}
+
+func promptProviderMode(reader *bufio.Reader) (string, error) {
+	fmt.Fprintln(os.Stdout, "请选择 provider 配置模式：")
+	fmt.Fprintln(os.Stdout, "  1) OpenAI-compatible（例如 DeepSeek /v1）")
+	fmt.Fprintln(os.Stdout, "  2) Anthropic-compatible（例如 DeepSeek /anthropic）")
+	fmt.Fprint(os.Stdout, "请选择 [1/2]: ")
+	choice, err := reader.ReadString('\n')
 	if err != nil {
-		return err
+		return "", err
 	}
-	apiKey = strings.TrimSpace(apiKey)
-	if apiKey == "" {
-		return errors.New("API key must not be empty")
+	switch strings.TrimSpace(choice) {
+	case "", "1":
+		return "openai", nil
+	case "2":
+		return "anthropic", nil
+	default:
+		return "", fmt.Errorf("unsupported selection: %s", strings.TrimSpace(choice))
 	}
-	_ = os.Setenv("CLAUDE_CODE_USE_OPENAI", "1")
-	_ = os.Setenv("OPENAI_BASE_URL", baseURL)
-	_ = os.Setenv("OPENAI_MODEL", modelName)
-	_ = os.Setenv("OPENAI_API_KEY", apiKey)
-	return saveChatProfile(&chatProfile{
-		OpenAIBaseURL: baseURL,
-		OpenAIModel:   modelName,
-		OpenAIAPIKey:  apiKey,
-	})
+}
+
+func promptChatProfile(reader *bufio.Reader, mode string) (*chatProfile, error) {
+	switch mode {
+	case "anthropic":
+		defaultBaseURL := "https://api.deepseek.com/anthropic"
+		defaultModel := "deepseek-v4-pro"
+		fmt.Fprintf(os.Stdout, "Anthropic-compatible Base URL [%s]: ", defaultBaseURL)
+		baseURL, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		baseURL = strings.TrimSpace(baseURL)
+		if baseURL == "" {
+			baseURL = defaultBaseURL
+		}
+		fmt.Fprintf(os.Stdout, "Model [%s]: ", defaultModel)
+		modelName, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			modelName = defaultModel
+		}
+		fmt.Fprint(os.Stdout, "API Key: ")
+		apiKey, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			return nil, errors.New("API key must not be empty")
+		}
+		return &chatProfile{
+			ProviderMode:       "anthropic",
+			AnthropicBaseURL:   baseURL,
+			AnthropicModel:     modelName,
+			AnthropicAuthToken: apiKey,
+		}, nil
+	default:
+		defaultBaseURL := "https://api.deepseek.com/v1"
+		defaultModel := "deepseek-chat"
+		fmt.Fprintf(os.Stdout, "OpenAI-compatible Base URL [%s]: ", defaultBaseURL)
+		baseURL, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		baseURL = strings.TrimSpace(baseURL)
+		if baseURL == "" {
+			baseURL = defaultBaseURL
+		}
+		fmt.Fprintf(os.Stdout, "Model [%s]: ", defaultModel)
+		modelName, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			modelName = defaultModel
+		}
+		fmt.Fprint(os.Stdout, "API Key: ")
+		apiKey, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			return nil, errors.New("API key must not be empty")
+		}
+		return &chatProfile{
+			ProviderMode:  "openai",
+			OpenAIBaseURL: baseURL,
+			OpenAIModel:   modelName,
+			OpenAIAPIKey:  apiKey,
+		}, nil
+	}
 }
 
 func loadChatProfile() (*chatProfile, error) {
@@ -1469,7 +1604,7 @@ func parseOpenClaudeForwardFlags(args []string) (openClaudeForwardCLIOptions, er
 
 func parseOpenClaudeChatFlags(args []string) (openClaudeChatCLIOptions, error) {
 	opts := openClaudeChatCLIOptions{
-		ListenAddress: "127.0.0.1:50052",
+		ListenAddress: "127.0.0.1:0",
 		CLIRepoPath:   os.Getenv("AIR_OPENCLAUDE_REPO"),
 	}
 	for i := 0; i < len(args); i++ {
@@ -1518,7 +1653,7 @@ func parseOpenClaudeChatFlags(args []string) (openClaudeChatCLIOptions, error) {
 func parseOpenClaudeRunFlags(args []string) (openClaudeRunCLIOptions, error) {
 	opts := openClaudeRunCLIOptions{
 		Provider:      "firecracker",
-		ListenAddress: "127.0.0.1:50052",
+		ListenAddress: "127.0.0.1:0",
 		RepoPath:      os.Getenv("AIR_OPENCLAUDE_REPO"),
 		GuestRepoPath: os.Getenv("AIR_OPENCLAUDE_GUEST_REPO"),
 	}
@@ -1600,24 +1735,35 @@ func runOpenClaudeChat(ctx context.Context, manager *session.Manager, opts openC
 	}
 	transcriptPath := filepath.Join(inspect.Runtime.RootPath, "openclaude-chat-transcript.jsonl")
 
+	listenAddress := opts.ListenAddress
+	if listenAddress == "" {
+		listenAddress = "127.0.0.1:0"
+	}
+	if strings.HasSuffix(listenAddress, ":0") {
+		resolved, err := reserveLocalListenAddress(listenAddress)
+		if err != nil {
+			return err
+		}
+		listenAddress = resolved
+	}
+
 	forwardErrCh := make(chan error, 1)
 	go func() {
 		forwardErrCh <- manager.ForwardOpenClaude(ctx, opts.SessionID, session.OpenClaudeForwardOptions{
-			ListenAddress: opts.ListenAddress,
+			ListenAddress: listenAddress,
 		})
 	}()
 
-	host, port, err := splitListenAddress(opts.ListenAddress)
+	host, port, err := splitListenAddress(listenAddress)
 	if err != nil {
 		stop()
 		<-forwardErrCh
 		return err
 	}
 
-	if err := waitForLocalTCPReady(ctx, opts.ListenAddress, 10*time.Second); err != nil {
+	if err := waitForForwardReady(ctx, listenAddress, 10*time.Second, forwardErrCh); err != nil {
 		stop()
-		<-forwardErrCh
-		return fmt.Errorf("openclaude forward did not become ready on %s: %w", opts.ListenAddress, err)
+		return fmt.Errorf("openclaude forward did not become ready on %s: %w", listenAddress, err)
 	}
 
 	scriptPath, err := writeOpenClaudeChatScript(opts.CLIRepoPath)
@@ -1642,7 +1788,7 @@ func runOpenClaudeChat(ctx context.Context, manager *session.Manager, opts openC
 	cli.Stdout = os.Stdout
 	cli.Stderr = os.Stderr
 
-	fmt.Fprintf(os.Stderr, "air: openclaude chat on session %s via %s\n", opts.SessionID, opts.ListenAddress)
+	fmt.Fprintf(os.Stderr, "air: openclaude chat on session %s via %s\n", opts.SessionID, listenAddress)
 	if err := cli.Run(); err != nil {
 		stop()
 		<-forwardErrCh
@@ -1654,6 +1800,39 @@ func runOpenClaudeChat(ctx context.Context, manager *session.Manager, opts openC
 		return err
 	}
 	return nil
+}
+
+func waitForForwardReady(ctx context.Context, address string, timeout time.Duration, forwardErrCh <-chan error) error {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-forwardErrCh:
+			if err == nil {
+				return errors.New("openclaude forward exited before becoming ready")
+			}
+			return err
+		default:
+		}
+
+		conn, err := dialer.DialContext(ctx, "tcp", address)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+		time.Sleep(100 * time.Millisecond)
+	}
+	if lastErr == nil {
+		lastErr = os.ErrDeadlineExceeded
+	}
+	return lastErr
 }
 
 func waitForLocalTCPReady(ctx context.Context, address string, timeout time.Duration) error {
@@ -1681,7 +1860,20 @@ func waitForLocalTCPReady(ctx context.Context, address string, timeout time.Dura
 	return lastErr
 }
 
+func reserveLocalListenAddress(address string) (string, error) {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return "", err
+	}
+	resolved := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
 func runOpenClaudeOneCommand(ctx context.Context, manager *session.Manager, opts openClaudeRunCLIOptions) error {
+	startedAt := time.Now()
 	started, err := manager.StartOpenClaude(session.OpenClaudeStartOptions{
 		Provider:      opts.Provider,
 		RepoPath:      opts.RepoPath,
@@ -1691,6 +1883,7 @@ func runOpenClaudeOneCommand(ctx context.Context, manager *session.Manager, opts
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(os.Stderr, "air: firecracker session + openclaude ready in %s\n", formatStepDuration(time.Since(startedAt)))
 	fmt.Fprintf(os.Stderr, "air: created session %s provider=%s\n", started.SessionID, started.Provider)
 	return runOpenClaudeChat(ctx, manager, openClaudeChatCLIOptions{
 		SessionID:     started.SessionID,
@@ -1718,6 +1911,13 @@ func splitListenAddress(address string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid listen address: %s", address)
 	}
 	return host, port, nil
+}
+
+func formatStepDuration(d time.Duration) string {
+	if d < time.Millisecond {
+		return d.String()
+	}
+	return d.Truncate(time.Millisecond).String()
 }
 
 func replayOpenClaudeChat(manager *session.Manager, sessionID string, out io.Writer) error {

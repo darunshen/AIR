@@ -209,6 +209,21 @@ func TestParseChatFlagsSupportsReconfigure(t *testing.T) {
 	}
 }
 
+func TestParseChatFlagsDoesNotDefaultWorkspace(t *testing.T) {
+	t.Helper()
+
+	opts, err := parseChatFlags([]string{"--provider", "firecracker"})
+	if err != nil {
+		t.Fatalf("parse chat flags: %v", err)
+	}
+	if opts.WorkspacePath != "" {
+		t.Fatalf("expected empty default workspace, got %q", opts.WorkspacePath)
+	}
+	if opts.ListenAddress != "127.0.0.1:0" {
+		t.Fatalf("unexpected default listen address: %q", opts.ListenAddress)
+	}
+}
+
 func TestParseSessionExportWorkspaceFlags(t *testing.T) {
 	t.Helper()
 
@@ -319,6 +334,19 @@ func TestParseOpenClaudeChatFlags(t *testing.T) {
 	}
 }
 
+func TestParseOpenClaudeChatFlagsDefaultsToEphemeralListen(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("AIR_OPENCLAUDE_REPO", "/tmp/openclaude")
+	opts, err := parseOpenClaudeChatFlags([]string{"sess_123"})
+	if err != nil {
+		t.Fatalf("parse openclaude chat flags: %v", err)
+	}
+	if opts.ListenAddress != "127.0.0.1:0" {
+		t.Fatalf("unexpected default listen address: %q", opts.ListenAddress)
+	}
+}
+
 func TestParseOpenClaudeChatFlagsRequiresRepo(t *testing.T) {
 	t.Helper()
 
@@ -370,5 +398,121 @@ func TestParseOpenClaudeRunFlags(t *testing.T) {
 	}
 	if opts.ListenAddress != "127.0.0.1:6000" {
 		t.Fatalf("unexpected listen address: %q", opts.ListenAddress)
+	}
+}
+
+func TestParseOpenClaudeRunFlagsDefaultsToEphemeralListen(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("AIR_OPENCLAUDE_REPO", "/tmp/openclaude")
+	opts, err := parseOpenClaudeRunFlags([]string{"--provider", "firecracker"})
+	if err != nil {
+		t.Fatalf("parse openclaude run flags: %v", err)
+	}
+	if opts.ListenAddress != "127.0.0.1:0" {
+		t.Fatalf("unexpected default listen address: %q", opts.ListenAddress)
+	}
+}
+
+func TestReserveLocalListenAddressAllocatesConcretePort(t *testing.T) {
+	t.Helper()
+
+	address, err := reserveLocalListenAddress("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve local listen address: %v", err)
+	}
+	if !strings.HasPrefix(address, "127.0.0.1:") {
+		t.Fatalf("unexpected reserved address: %q", address)
+	}
+	if strings.HasSuffix(address, ":0") {
+		t.Fatalf("expected concrete port, got %q", address)
+	}
+}
+
+func TestEnsureOpenClaudeGuestBootArgsSetsInitForAlpineGuest(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "")
+	ensureOpenClaudeGuestBootArgs("/tmp/assets/firecracker/openclaude-alpine-rootfs.ext4")
+	if got := os.Getenv("AIR_FIRECRACKER_BOOT_ARGS"); got != "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init" {
+		t.Fatalf("unexpected boot args: %q", got)
+	}
+}
+
+func TestEnsureOpenClaudeGuestBootArgsDoesNotOverrideExplicitValue(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "console=ttyS0 custom=yes")
+	ensureOpenClaudeGuestBootArgs("/tmp/assets/firecracker/openclaude-alpine-rootfs.ext4")
+	if got := os.Getenv("AIR_FIRECRACKER_BOOT_ARGS"); got != "console=ttyS0 custom=yes" {
+		t.Fatalf("unexpected boot args override: %q", got)
+	}
+}
+
+func TestEnsureOpenClaudeGuestBootArgsIgnoresOtherRootfs(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "")
+	ensureOpenClaudeGuestBootArgs("/tmp/assets/firecracker/hello-rootfs-air.ext4")
+	if got := os.Getenv("AIR_FIRECRACKER_BOOT_ARGS"); got != "" {
+		t.Fatalf("unexpected boot args for non-openclaude rootfs: %q", got)
+	}
+}
+
+func TestApplyChatProfileEnvOpenAI(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("CLAUDE_CODE_USE_OPENAI", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://api.deepseek.com/anthropic")
+	t.Setenv("ANTHROPIC_MODEL", "deepseek-v4-pro")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "sk-anthropic")
+
+	applyChatProfileEnv(&chatProfile{
+		ProviderMode:  "openai",
+		OpenAIBaseURL: "https://api.deepseek.com/v1",
+		OpenAIModel:   "deepseek-chat",
+		OpenAIAPIKey:  "sk-openai",
+	})
+
+	if got := os.Getenv("CLAUDE_CODE_USE_OPENAI"); got != "1" {
+		t.Fatalf("expected CLAUDE_CODE_USE_OPENAI=1, got %q", got)
+	}
+	if got := os.Getenv("OPENAI_BASE_URL"); got != "https://api.deepseek.com/v1" {
+		t.Fatalf("unexpected openai base url: %q", got)
+	}
+	if got := os.Getenv("ANTHROPIC_BASE_URL"); got != "" {
+		t.Fatalf("expected anthropic base url cleared, got %q", got)
+	}
+}
+
+func TestApplyChatProfileEnvAnthropic(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("CLAUDE_CODE_USE_OPENAI", "1")
+	t.Setenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+	t.Setenv("OPENAI_MODEL", "deepseek-chat")
+	t.Setenv("OPENAI_API_KEY", "sk-openai")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+	t.Setenv("ANTHROPIC_MODEL", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+
+	applyChatProfileEnv(&chatProfile{
+		ProviderMode:       "anthropic",
+		AnthropicBaseURL:   "https://api.deepseek.com/anthropic",
+		AnthropicModel:     "deepseek-v4-pro",
+		AnthropicAuthToken: "sk-anthropic",
+	})
+
+	if got := os.Getenv("CLAUDE_CODE_USE_OPENAI"); got != "" {
+		t.Fatalf("expected CLAUDE_CODE_USE_OPENAI cleared, got %q", got)
+	}
+	if got := os.Getenv("ANTHROPIC_BASE_URL"); got != "https://api.deepseek.com/anthropic" {
+		t.Fatalf("unexpected anthropic base url: %q", got)
+	}
+	if got := os.Getenv("OPENAI_BASE_URL"); got != "" {
+		t.Fatalf("expected openai base url cleared, got %q", got)
 	}
 }

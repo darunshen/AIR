@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -754,6 +755,78 @@ func TestApplyOpenClaudeRuntimeEnvStripsAnthropicEnvWhenUsingOpenAI(t *testing.T
 	}
 	if env["OPENAI_API_KEY"] != "sk-openai" {
 		t.Fatalf("expected OPENAI_API_KEY to be preserved, got %+v", env)
+	}
+}
+
+func TestApplyOpenClaudeRuntimeEnvMapsAnthropicAuthToken(t *testing.T) {
+	t.Helper()
+
+	env := applyOpenClaudeRuntimeEnv("firecracker", map[string]string{
+		"ANTHROPIC_AUTH_TOKEN": "sk-anthropic",
+		"ANTHROPIC_BASE_URL":   "https://api.deepseek.com/anthropic",
+		"ANTHROPIC_MODEL":      "deepseek-v4-pro",
+		"OPENAI_API_KEY":       "sk-openai",
+	})
+	if env["ANTHROPIC_AUTH_TOKEN"] != "sk-anthropic" {
+		t.Fatalf("expected ANTHROPIC_AUTH_TOKEN preserved, got %+v", env)
+	}
+	if env["ANTHROPIC_API_KEY"] != "sk-anthropic" {
+		t.Fatalf("expected ANTHROPIC_API_KEY mirrored from auth token, got %+v", env)
+	}
+	if _, ok := env["OPENAI_API_KEY"]; ok {
+		t.Fatalf("expected OPENAI_API_KEY to be stripped in anthropic mode, got %+v", env)
+	}
+}
+
+func TestBuildOpenClaudeGlobalConfigIncludesManagedAnthropicKey(t *testing.T) {
+	t.Helper()
+
+	apiKey := "sk-1234567890ABCDEFGHIJKLMN"
+	body := buildOpenClaudeGlobalConfig(map[string]string{
+		"ANTHROPIC_API_KEY":  apiKey,
+		"ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+		"ANTHROPIC_MODEL":    "deepseek-v4-pro",
+		"HTTP_PROXY":         "http://127.0.0.1:18080",
+	})
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+
+	if got := decoded["primaryApiKey"]; got != apiKey {
+		t.Fatalf("expected primaryApiKey %q, got %#v", apiKey, got)
+	}
+
+	custom, ok := decoded["customApiKeyResponses"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected customApiKeyResponses object, got %#v", decoded["customApiKeyResponses"])
+	}
+	approved, ok := custom["approved"].([]any)
+	if !ok || len(approved) != 1 {
+		t.Fatalf("expected approved list, got %#v", custom["approved"])
+	}
+	if got := approved[0]; got != normalizeOpenClaudeAPIKeyForConfig(apiKey) {
+		t.Fatalf("unexpected approved key suffix: %#v", got)
+	}
+
+	env, ok := decoded["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected env object, got %#v", decoded["env"])
+	}
+	if got := env["ANTHROPIC_MODEL"]; got != "deepseek-v4-pro" {
+		t.Fatalf("expected ANTHROPIC_MODEL in env, got %#v", got)
+	}
+}
+
+func TestNormalizeOpenClaudeAPIKeyForConfig(t *testing.T) {
+	t.Helper()
+
+	if got := normalizeOpenClaudeAPIKeyForConfig("short-key"); got != "short-key" {
+		t.Fatalf("expected short key unchanged, got %q", got)
+	}
+	if got := normalizeOpenClaudeAPIKeyForConfig("1234567890123456789012345"); got != "67890123456789012345" {
+		t.Fatalf("unexpected normalized key: %q", got)
 	}
 }
 

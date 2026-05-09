@@ -45,7 +45,7 @@
 ```text
 AIR OpenClaude Chat
 provider=firecracker session=sess_748ef6b0f627bd88 workdir=/workspace
-Connected to 127.0.0.1:50052. Type /exit to quit.
+Connected to 127.0.0.1:<ephemeral-port>. Type /exit to quit.
 air:openclaude@sess_748ef6b0f627bd88>
 ```
 
@@ -54,6 +54,8 @@ air:openclaude@sess_748ef6b0f627bd88>
 ```text
 /tmp/air-chat-home5/workspace/runtime/sessions/firecracker/sess_748ef6b0f627bd88/openclaude-chat-transcript.jsonl
 ```
+
+当前实现中，`air chat` 默认会为 host 本地 forward 监听动态分配回环端口，并在启动时打印阶段耗时，例如 `firecracker session + openclaude ready in 42.86s`，便于直接区分前置检查与 guest 冷启动耗时。
 
 ## 4. 验收过程中暴露并修复的问题
 

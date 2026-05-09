@@ -223,6 +223,8 @@ air chat
 - AIR 官方 OpenClaude host bundle（当前优先支持 `linux/amd64`）
 
 其中 host bundle 如果暂时不可用，或者当前架构还没有官方 bundle，AIR 会自动回退到源码下载和 `bun install`。
+`air chat` 默认使用动态分配的 host 本地回环端口，而不是固定 `127.0.0.1:50052`，以避免残留监听端口污染 forward 链路。
+启动时还会打印分阶段耗时，帮助区分前置检查、Firecracker 启动和 OpenClaude gRPC 冷启动。
 
 前提：
 

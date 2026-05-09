@@ -300,6 +300,8 @@ It interactively prepares the missing runtime dependencies and configuration, th
 On `firecracker`, this step can prompt for the AIR official Firecracker bundle, the AIR official OpenClaude Firecracker guest rootfs bundle, and the AIR official OpenClaude host bundle (currently `linux/amd64` only).
 The first saved model settings are persisted to `~/.config/air/chat.json`.
 To force model setup again, run `air chat --reconfigure`.
+`air chat` now uses an ephemeral host loopback port by default instead of relying on a fixed `127.0.0.1:50052`.
+It also prints stage timing so you can tell whether the delay is in preflight checks or in Firecracker / OpenClaude cold start.
 
 If you already prepared the OpenClaude runtime manually and only want the old direct path, the shortest host-side text entry point is:
 
