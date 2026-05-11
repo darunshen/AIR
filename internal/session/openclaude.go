@@ -336,15 +336,25 @@ func (m *Manager) ForwardOpenClaude(ctx context.Context, sessionID string, opts 
 		}
 		go func() {
 			defer clientConn.Close()
-			fmt.Fprintf(os.Stderr, "air: forward accepted session=%s client=%s listen=%s\n", sessionID, clientConn.RemoteAddr().String(), listenAddress)
+			if openClaudeTransportDebugEnabled() {
+				fmt.Fprintf(os.Stderr, "air: forward accepted session=%s client=%s listen=%s\n", sessionID, clientConn.RemoteAddr().String(), listenAddress)
+			}
 			targetConn, _, err := m.DialOpenClaude(sessionID, dialTimeout)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "air: forward dial failed session=%s target=%s:%d err=%v\n", sessionID, defaultOpenClaudeHost, defaultOpenClaudePort, err)
+				if openClaudeTransportDebugEnabled() {
+					fmt.Fprintf(os.Stderr, "air: forward dial failed session=%s target=%s:%d err=%v\n", sessionID, defaultOpenClaudeHost, defaultOpenClaudePort, err)
+				}
 				return
 			}
 			defer targetConn.Close()
-			fmt.Fprintf(os.Stderr, "air: forward dial connected session=%s target=%s:%d\n", sessionID, defaultOpenClaudeHost, defaultOpenClaudePort)
-			bridgeConnsWithLogger(sessionID, clientConn, targetConn)
+			if openClaudeTransportDebugEnabled() {
+				fmt.Fprintf(os.Stderr, "air: forward dial connected session=%s target=%s:%d\n", sessionID, defaultOpenClaudeHost, defaultOpenClaudePort)
+			}
+			bridgeConnsWithLogger(
+				sessionID,
+				&loggedConn{Conn: clientConn, sessionID: sessionID, name: "client"},
+				&loggedConn{Conn: targetConn, sessionID: sessionID, name: "target"},
+			)
 		}()
 	}
 }
@@ -512,12 +522,15 @@ func renderOpenClaudeStartCommand(meta *openClaudeMetadata, env map[string]strin
 	configDir := path.Join(configHome, ".openclaude")
 	configFile := path.Join(configDir, ".openclaude.json")
 	configJSON := buildOpenClaudeGlobalConfig(env)
+	diagnosticJSON := buildOpenClaudeDiagnosticConfig(env, meta)
 	envParts := []string{
 		"GRPC_HOST=" + shellQuote(meta.Host),
 		"GRPC_PORT=" + shellQuote(strconv.Itoa(meta.Port)),
 		"AIR_OPENCLAUDE_SESSION_ID=" + shellQuote(meta.SessionID),
 		"HOME=" + shellQuote(configHome),
 		"CLAUDE_CONFIG_DIR=" + shellQuote(configDir),
+		"SHELL='/bin/bash'",
+		"CLAUDE_CODE_SHELL='/bin/bash'",
 	}
 	for _, key := range sortedEnvKeys(env) {
 		envParts = append(envParts, key+"="+shellQuote(env[key]))
@@ -526,14 +539,71 @@ func renderOpenClaudeStartCommand(meta *openClaudeMetadata, env map[string]strin
 		"mkdir -p " + shellQuote(meta.StateDir),
 		"mkdir -p " + shellQuote(configDir),
 		"printf '%s\\n' " + shellQuote(configJSON) + " > " + shellQuote(configFile),
+		"printf '%s\\n' " + shellQuote(diagnosticJSON) + " >> " + shellQuote(meta.LogPath),
 		"cd " + shellQuote(meta.RepoPath),
 		"nohup env " + strings.Join(envParts, " ") +
-			" sh -c " + shellQuote(meta.Command) +
+			" /bin/sh -c " + shellQuote(meta.Command) +
 			" >> " + shellQuote(meta.LogPath) + " 2>&1 < /dev/null & pid=$!",
 		"mkdir -p " + shellQuote(meta.StateDir),
 		"printf '%s\\n' \"$pid\" > " + shellQuote(meta.PIDPath),
 		"printf '%s\\n' \"$pid\"",
 	}, " && ")
+}
+
+func buildOpenClaudeDiagnosticConfig(env map[string]string, meta *openClaudeMetadata) string {
+	type diagnostic struct {
+		Event            string            `json:"event"`
+		SessionID        string            `json:"session_id"`
+		Provider         string            `json:"provider"`
+		RepoPath         string            `json:"repo_path"`
+		Host             string            `json:"host"`
+		Port             int               `json:"port"`
+		EnvKeys          []string          `json:"env_keys"`
+		SelectedEnv      map[string]string `json:"selected_env,omitempty"`
+		GeneratedAt      string            `json:"generated_at"`
+	}
+
+	selected := map[string]string{}
+	for _, key := range []string{
+		"CLAUDE_CODE_USE_OPENAI",
+		"OPENAI_BASE_URL",
+		"OPENAI_MODEL",
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_MODEL",
+		"HTTP_PROXY",
+		"HTTPS_PROXY",
+		"ALL_PROXY",
+		"NO_PROXY",
+	} {
+		if value := strings.TrimSpace(env[key]); value != "" {
+			selected[key] = value
+		}
+	}
+	if value := strings.TrimSpace(env["OPENAI_API_KEY"]); value != "" {
+		selected["OPENAI_API_KEY"] = normalizeOpenClaudeAPIKeyForConfig(value)
+	}
+	if value := strings.TrimSpace(env["ANTHROPIC_API_KEY"]); value != "" {
+		selected["ANTHROPIC_API_KEY"] = normalizeOpenClaudeAPIKeyForConfig(value)
+	}
+	if value := strings.TrimSpace(env["ANTHROPIC_AUTH_TOKEN"]); value != "" {
+		selected["ANTHROPIC_AUTH_TOKEN"] = normalizeOpenClaudeAPIKeyForConfig(value)
+	}
+
+	body, err := json.Marshal(diagnostic{
+		Event:       "air_openclaude_launch",
+		SessionID:   meta.SessionID,
+		Provider:    meta.Provider,
+		RepoPath:    meta.RepoPath,
+		Host:        meta.Host,
+		Port:        meta.Port,
+		EnvKeys:     sortedEnvKeys(env),
+		SelectedEnv: selected,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return `{"event":"air_openclaude_launch","error":"marshal_failed"}`
+	}
+	return string(body)
 }
 
 func buildOpenClaudeGlobalConfig(env map[string]string) string {
@@ -623,6 +693,7 @@ func applyOpenClaudeRuntimeEnv(provider string, env map[string]string) map[strin
 		if out["ANTHROPIC_API_KEY"] == "" && out["ANTHROPIC_AUTH_TOKEN"] != "" {
 			out["ANTHROPIC_API_KEY"] = out["ANTHROPIC_AUTH_TOKEN"]
 		}
+		delete(out, "ANTHROPIC_AUTH_TOKEN")
 		delete(out, "CLAUDE_CODE_USE_OPENAI")
 		delete(out, "OPENAI_API_KEY")
 		delete(out, "OPENAI_BASE_URL")
@@ -705,40 +776,89 @@ func bridgeConns(left, right net.Conn) {
 	copyErrCh := make(chan error, 2)
 	go func() {
 		_, err := io.Copy(left, right)
+		closeConnWrite(left)
 		copyErrCh <- err
 	}()
 	go func() {
 		_, err := io.Copy(right, left)
+		closeConnWrite(right)
 		copyErrCh <- err
 	}()
 	<-copyErrCh
+	<-copyErrCh
 	_ = left.Close()
 	_ = right.Close()
-	<-copyErrCh
 }
 
 func bridgeConnsWithLogger(sessionID string, left, right net.Conn) {
-	copyErrCh := make(chan string, 2)
+	if !openClaudeTransportDebugEnabled() {
+		bridgeConns(left, right)
+		return
+	}
+	type bridgeResult struct {
+		direction string
+		bytes     int64
+		err       error
+	}
+	copyErrCh := make(chan bridgeResult, 2)
 	go func() {
-		_, err := io.Copy(left, right)
-		if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
-			copyErrCh <- fmt.Sprintf("target->client err=%v", err)
-			return
-		}
-		copyErrCh <- "target->client closed"
+		n, err := io.Copy(left, right)
+		closeConnWrite(left)
+		copyErrCh <- bridgeResult{direction: "target->client", bytes: n, err: err}
 	}()
 	go func() {
-		_, err := io.Copy(right, left)
-		if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
-			copyErrCh <- fmt.Sprintf("client->target err=%v", err)
-			return
-		}
-		copyErrCh <- "client->target closed"
+		n, err := io.Copy(right, left)
+		closeConnWrite(right)
+		copyErrCh <- bridgeResult{direction: "client->target", bytes: n, err: err}
 	}()
 	first := <-copyErrCh
-	fmt.Fprintf(os.Stderr, "air: forward bridge session=%s %s\n", sessionID, first)
+	if first.err != nil && !errors.Is(first.err, net.ErrClosed) && !errors.Is(first.err, io.EOF) {
+		fmt.Fprintf(os.Stderr, "air: forward bridge session=%s direction=%s bytes=%d err=%v\n", sessionID, first.direction, first.bytes, first.err)
+	} else {
+		fmt.Fprintf(os.Stderr, "air: forward bridge session=%s direction=%s bytes=%d closed\n", sessionID, first.direction, first.bytes)
+	}
+	second := <-copyErrCh
+	if second.err != nil && !errors.Is(second.err, net.ErrClosed) && !errors.Is(second.err, io.EOF) {
+		fmt.Fprintf(os.Stderr, "air: forward bridge session=%s direction=%s bytes=%d err=%v\n", sessionID, second.direction, second.bytes, second.err)
+	} else {
+		fmt.Fprintf(os.Stderr, "air: forward bridge session=%s direction=%s bytes=%d closed\n", sessionID, second.direction, second.bytes)
+	}
 	_ = left.Close()
 	_ = right.Close()
-	second := <-copyErrCh
-	fmt.Fprintf(os.Stderr, "air: forward bridge session=%s %s\n", sessionID, second)
+}
+
+type closeWriter interface {
+	CloseWrite() error
+}
+
+func closeConnWrite(conn net.Conn) {
+	if cw, ok := conn.(closeWriter); ok {
+		_ = cw.CloseWrite()
+	}
+}
+
+type loggedConn struct {
+	net.Conn
+	sessionID string
+	name      string
+}
+
+func (c *loggedConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 || err != nil {
+		fmt.Fprintf(os.Stderr, "air: conn session=%s side=%s op=read bytes=%d err=%v\n", c.sessionID, c.name, n, err)
+	}
+	return n, err
+}
+
+func (c *loggedConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 || err != nil {
+		fmt.Fprintf(os.Stderr, "air: conn session=%s side=%s op=write bytes=%d err=%v\n", c.sessionID, c.name, n, err)
+	}
+	return n, err
+}
+
+func openClaudeTransportDebugEnabled() bool {
+	return strings.TrimSpace(os.Getenv("AIR_DEBUG_TRANSPORT")) == "1"
 }

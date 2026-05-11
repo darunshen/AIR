@@ -226,6 +226,17 @@ air chat
 `air chat` 默认使用动态分配的 host 本地回环端口，而不是固定 `127.0.0.1:50052`，以避免残留监听端口污染 forward 链路。
 启动时还会打印分阶段耗时，帮助区分前置检查、Firecracker 启动和 OpenClaude gRPC 冷启动。
 
+如果需要排查 OpenClaude / transport 链路，可按需启用调试开关，而不是依赖默认日志：
+
+- `AIR_DEBUG_TRANSPORT=1`
+  - 打开 host forward 与 guest `air-agent` 的 transport 级日志
+  - 适合排查 vsock / proxy / TCP bridge 方向的读写与半关闭问题
+- `AIR_DEBUG_OPENCLAUDE=1`
+  - 重新构建 OpenClaude guest rootfs 时，把额外的 `[air-debug]` 日志注入 guest 内 `server.ts`
+  - 适合排查 OpenClaude gRPC handler 是否真正收到请求
+
+默认构建与默认运行不会开启这些调试日志，以避免正常使用时泄露多余的流量细节。
+
 前提：
 
 - `--repo` 指向的 OpenClaude 目录已经完成 `bun install`
@@ -234,18 +245,29 @@ air chat
 - 在 `firecracker` provider 下，AIR 现在会默认自动注入 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY=http://127.0.0.1:18080`，用于 guest 内模型出网
 - 如果宿主机环境里已经带了 `127.0.0.1` / `localhost` 这类本地代理变量，AIR 也会在 `firecracker` 模式下自动改写成 guest 内可用的 `127.0.0.1:18080`
 
-如果目标是 Firecracker guest，而不是 `local` provider，当前推荐直接构建一个较新的 Alpine guest rootfs，而不是继续在官方 demo rootfs 上硬塞 Bun：
+如果目标是 Firecracker guest，而不是 `local` provider，当前推荐直接基于 Firecracker 官方 getting-started 所使用的 Ubuntu guest rootfs 构建 OpenClaude 镜像：
 
 ```bash
-scripts/prepare-openclaude-alpine-rootfs.sh \
-  assets/firecracker/openclaude-alpine-rootfs.ext4 \
+scripts/fetch-firecracker-ubuntu-assets.sh assets/firecracker
+scripts/prepare-openclaude-ubuntu-rootfs.sh \
+  assets/firecracker/openclaude-ubuntu-rootfs.ext4 \
   ~/Documents/code/openclaude
+
+该脚本现在会在 guest 中额外注入 OpenClaude 常用最小工具依赖：
+
+- `bash`
+- `ripgrep`
+- `curl`
+- `git`
+- `ca-certificates`
+
+这样 OpenClaude 的 Bash / Glob / Grep / 基础网络工具路径可以直接在 Firecracker guest 内工作，而不需要首次对话时再临时安装这些包。
 ```
 
 然后使用：
 
 ```bash
-export AIR_FIRECRACKER_ROOTFS="$(pwd)/assets/firecracker/openclaude-alpine-rootfs.ext4"
+export AIR_FIRECRACKER_ROOTFS="$(pwd)/assets/firecracker/openclaude-ubuntu-rootfs.ext4"
 export AIR_FIRECRACKER_BOOT_ARGS="console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init"
 
 air agent openclaude start \
@@ -258,7 +280,7 @@ air agent openclaude start \
 - guest 内固定 OpenClaude 路径为 `/opt/openclaude`
 - guest 内固定 Bun 路径为 `/usr/local/bin/bun`
 - guest 内还会提供 `/usr/local/bin/openclaude-grpc`
-- guest 通过 `/etc/inittab` 在启动时拉起 `air-agent`
+- guest 通过接管 `/sbin/init` 在启动时拉起 `air-agent`
 - `firecracker` provider 下，如果没有显式指定 `--guest-repo`，AIR 默认会回落到 `/opt/openclaude`
 - `air session create --provider firecracker --workspace /path/to/repo` 会额外挂入只读 `workspace.ext4` 和可写 `workspace-upper.ext4`，并在 guest 内挂载为 `/workspace`
 - `/opt/openclaude` 是 guest 内 agent 程序目录，不是用户任务工作区
@@ -286,7 +308,7 @@ air agent openclaude start \
 - OpenClaude 长驻进程托管与 pid/log 元数据
 - Firecracker guest 内 OpenClaude 启动命令和 provider 环境注入
 - Firecracker guest 内 session 私有可写 `HOME` / `CLAUDE_CONFIG_DIR`
-- `scripts/prepare-openclaude-alpine-rootfs.sh`
+- `scripts/prepare-openclaude-ubuntu-rootfs.sh`
 - `scripts/run-openclaude-firecracker-acceptance.sh`
 - `air session export-workspace`
 

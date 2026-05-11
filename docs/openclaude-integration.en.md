@@ -220,6 +220,17 @@ If the host bundle path is unavailable, or if the current architecture does not 
 `air chat` now uses an ephemeral host loopback port instead of assuming a fixed `127.0.0.1:50052`, which avoids stale local listeners polluting the forward path.
 It also prints stage timing so startup latency can be attributed to preflight checks, Firecracker boot, or OpenClaude gRPC cold start.
 
+When you need to debug the OpenClaude / transport path, enable explicit debug flags instead of relying on default logs:
+
+- `AIR_DEBUG_TRANSPORT=1`
+  - enables host forward and guest `air-agent` transport-level logs
+  - useful for diagnosing vsock / proxy / TCP bridge read-write and half-close issues
+- `AIR_DEBUG_OPENCLAUDE=1`
+  - when rebuilding the OpenClaude guest rootfs, injects additional `[air-debug]` logging into guest `server.ts`
+  - useful for checking whether the OpenClaude gRPC handler actually receives the request
+
+Default builds and default runtime behavior keep these logs off so routine usage does not leak unnecessary transport details.
+
 Prerequisites:
 
 - the OpenClaude repo pointed to by `--repo` has already completed `bun install`
@@ -228,18 +239,32 @@ Prerequisites:
 - on the `firecracker` provider, AIR now automatically injects `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY=http://127.0.0.1:18080` so guest-side model traffic can egress through the host proxy path
 - if the host shell already exports a loopback proxy such as `127.0.0.1` or `localhost`, AIR also rewrites that value to the guest-usable `127.0.0.1:18080` path when running on `firecracker`
 
-If the target is a Firecracker guest rather than the `local` provider, the recommended path is now to build a newer Alpine-based guest rootfs instead of forcing Bun onto the old demo rootfs:
+If the target is a Firecracker guest rather than the `local` provider, the recommended path is now to build on top of the Ubuntu guest rootfs used by Firecracker's official getting-started flow:
 
 ```bash
-scripts/prepare-openclaude-alpine-rootfs.sh \
-  assets/firecracker/openclaude-alpine-rootfs.ext4 \
+scripts/fetch-firecracker-ubuntu-assets.sh assets/firecracker
+scripts/prepare-openclaude-ubuntu-rootfs.sh \
+  assets/firecracker/openclaude-ubuntu-rootfs.ext4 \
   ~/Documents/code/openclaude
+
+This script now also injects the minimum guest-side tool dependencies commonly
+required by OpenClaude:
+
+- `bash`
+- `ripgrep`
+- `curl`
+- `git`
+- `ca-certificates`
+
+This allows the Bash / Glob / Grep / basic network-tool path to work directly
+inside the Firecracker guest without requiring ad-hoc package installation on
+the first chat turn.
 ```
 
 Then use:
 
 ```bash
-export AIR_FIRECRACKER_ROOTFS="$(pwd)/assets/firecracker/openclaude-alpine-rootfs.ext4"
+export AIR_FIRECRACKER_ROOTFS="$(pwd)/assets/firecracker/openclaude-ubuntu-rootfs.ext4"
 export AIR_FIRECRACKER_BOOT_ARGS="console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init"
 
 air agent openclaude start \
@@ -252,7 +277,7 @@ In this layout:
 - the fixed guest OpenClaude path is `/opt/openclaude`
 - the fixed guest Bun path is `/usr/local/bin/bun`
 - the guest also exposes `/usr/local/bin/openclaude-grpc`
-- the guest starts `air-agent` through `/etc/inittab` on boot
+- the guest starts `air-agent` by taking over `/sbin/init` on boot
 - on the `firecracker` provider, AIR falls back to `/opt/openclaude` when `--guest-repo` is not explicitly provided
 - `air session create --provider firecracker --workspace /path/to/repo` now attaches a read-only `workspace.ext4` and a writable `workspace-upper.ext4`, then mounts them as `/workspace` inside the guest
 - `/opt/openclaude` is the guest program directory, not the user task workspace
@@ -279,7 +304,7 @@ The current state is no longer “OpenClaude in AIR still needs to be started”
 - long-running OpenClaude process management with pid/log metadata
 - Firecracker guest startup command and provider env injection
 - session-private writable `HOME` / `CLAUDE_CONFIG_DIR` inside Firecracker guests
-- `scripts/prepare-openclaude-alpine-rootfs.sh`
+- `scripts/prepare-openclaude-ubuntu-rootfs.sh`
 - `scripts/run-openclaude-firecracker-acceptance.sh`
 - `air session export-workspace`
 

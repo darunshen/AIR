@@ -11,7 +11,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/darunshen/AIR/internal/guestapi"
 )
@@ -87,7 +89,8 @@ func (s *Server) handleStream(ctx context.Context, rw io.ReadWriter) error {
 		})
 	}
 	if req.Type == guestapi.MessageTypeProxy {
-		return s.handleProxyStream(rw, encoder, req)
+		streamReader := streamAfterJSONDecode(decoder, reader)
+		return s.handleProxyStream(streamReader, rw, encoder, req)
 	}
 
 	if req.Type != guestapi.MessageTypeExec {
@@ -121,10 +124,13 @@ func (s *Server) handleStream(ctx context.Context, rw io.ReadWriter) error {
 	return encoder.Encode(execResult)
 }
 
-func (s *Server) handleProxyStream(rw io.ReadWriter, encoder *json.Encoder, req guestapi.ExecRequest) error {
+func (s *Server) handleProxyStream(reader io.Reader, rw io.ReadWriter, encoder *json.Encoder, req guestapi.ExecRequest) error {
 	network := req.Network
 	if network == "" {
 		network = "tcp"
+	}
+	if proxyTransportDebugEnabled() {
+		fmt.Fprintf(os.Stderr, "air-agent: proxy start request_id=%s network=%s address=%s\n", req.RequestID, network, req.Address)
 	}
 	if req.Address == "" {
 		return encoder.Encode(guestapi.ProxyResult{
@@ -142,6 +148,9 @@ func (s *Server) handleProxyStream(rw io.ReadWriter, encoder *json.Encoder, req 
 
 	targetConn, err := dialFn(network, req.Address)
 	if err != nil {
+		if proxyTransportDebugEnabled() {
+			fmt.Fprintf(os.Stderr, "air-agent: proxy dial failed request_id=%s address=%s err=%v\n", req.RequestID, req.Address, err)
+		}
 		return encoder.Encode(guestapi.ProxyResult{
 			Type:      guestapi.MessageTypeProxy,
 			RequestID: req.RequestID,
@@ -150,39 +159,145 @@ func (s *Server) handleProxyStream(rw io.ReadWriter, encoder *json.Encoder, req 
 		})
 	}
 	defer targetConn.Close()
+	if proxyTransportDebugEnabled() {
+		fmt.Fprintf(os.Stderr, "air-agent: proxy dial connected request_id=%s address=%s\n", req.RequestID, req.Address)
+		reader = &loggedReader{Reader: reader, requestID: req.RequestID, name: "proxy-client"}
+		targetConn = &loggedNetConn{Conn: targetConn, requestID: req.RequestID, name: "proxy-target"}
+		if conn, ok := rw.(net.Conn); ok {
+			rw = &loggedNetConn{Conn: conn, requestID: req.RequestID, name: "proxy-vsock"}
+		}
+	}
 
 	if err := encoder.Encode(guestapi.ProxyResult{
 		Type:      guestapi.MessageTypeProxy,
 		RequestID: req.RequestID,
 		Status:    "connected",
 	}); err != nil {
+		if proxyTransportDebugEnabled() {
+			fmt.Fprintf(os.Stderr, "air-agent: proxy encode connected failed request_id=%s err=%v\n", req.RequestID, err)
+		}
 		return err
 	}
 
-	copyErrCh := make(chan error, 2)
+	type proxyCopyResult struct {
+		direction string
+		bytes     int64
+		err       error
+	}
+	copyErrCh := make(chan proxyCopyResult, 2)
 	go func() {
-		_, err := io.Copy(targetConn, rw)
+		n, err := io.Copy(targetConn, reader)
 		if tcpConn, ok := targetConn.(*net.TCPConn); ok {
 			_ = tcpConn.CloseWrite()
 		}
-		copyErrCh <- err
+		copyErrCh <- proxyCopyResult{direction: "client->target", bytes: n, err: err}
 	}()
 	go func() {
-		_, err := io.Copy(rw, targetConn)
-		copyErrCh <- err
+		n, err := io.Copy(rw, targetConn)
+		copyErrCh <- proxyCopyResult{direction: "target->client", bytes: n, err: err}
 	}()
 
 	for i := 0; i < 2; i++ {
-		err := <-copyErrCh
-		if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) {
-			return err
+		result := <-copyErrCh
+		if result.err != nil && !errors.Is(result.err, net.ErrClosed) && !errors.Is(result.err, io.EOF) {
+			if proxyTransportDebugEnabled() {
+				fmt.Fprintf(os.Stderr, "air-agent: proxy copy request_id=%s direction=%s bytes=%d err=%v\n", req.RequestID, result.direction, result.bytes, result.err)
+			}
+			return result.err
 		}
+		if proxyTransportDebugEnabled() {
+			fmt.Fprintf(os.Stderr, "air-agent: proxy copy request_id=%s direction=%s bytes=%d closed\n", req.RequestID, result.direction, result.bytes)
+		}
+	}
+	if proxyTransportDebugEnabled() {
+		fmt.Fprintf(os.Stderr, "air-agent: proxy done request_id=%s\n", req.RequestID)
 	}
 	return nil
 }
 
+type loggedReader struct {
+	io.Reader
+	requestID string
+	name      string
+}
+
+func (r *loggedReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if n > 0 || err != nil {
+		fmt.Fprintf(os.Stderr, "air-agent: io request_id=%s name=%s op=read bytes=%d err=%v\n", r.requestID, r.name, n, err)
+	}
+	return n, err
+}
+
+type loggedNetConn struct {
+	net.Conn
+	requestID string
+	name      string
+}
+
+func (c *loggedNetConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 || err != nil {
+		fmt.Fprintf(os.Stderr, "air-agent: io request_id=%s name=%s op=read bytes=%d err=%v\n", c.requestID, c.name, n, err)
+	}
+	return n, err
+}
+
+func (c *loggedNetConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if n > 0 || err != nil {
+		fmt.Fprintf(os.Stderr, "air-agent: io request_id=%s name=%s op=write bytes=%d err=%v\n", c.requestID, c.name, n, err)
+	}
+	return n, err
+}
+
+func proxyTransportDebugEnabled() bool {
+	return strings.TrimSpace(os.Getenv("AIR_DEBUG_TRANSPORT")) == "1"
+}
+
+func streamAfterJSONDecode(decoder *json.Decoder, reader io.Reader) io.Reader {
+	streamReader := reader
+	if buffered := decoder.Buffered(); buffered != nil {
+		streamReader = io.MultiReader(buffered, reader)
+	}
+	return &leadingWhitespaceTrimmingReader{
+		reader:   streamReader,
+		trimming: true,
+	}
+}
+
+type leadingWhitespaceTrimmingReader struct {
+	reader   io.Reader
+	trimming bool
+}
+
+func (r *leadingWhitespaceTrimmingReader) Read(p []byte) (int, error) {
+	for {
+		n, err := r.reader.Read(p)
+		if !r.trimming || n == 0 {
+			return n, err
+		}
+		i := 0
+		for i < n && unicode.IsSpace(rune(p[i])) {
+			i++
+		}
+		if i == 0 {
+			r.trimming = false
+			return n, err
+		}
+		if i < n {
+			copy(p, p[i:n])
+			r.trimming = false
+			return n - i, err
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+}
+
 func defaultExec(ctx context.Context, command string) (*guestapi.ExecResult, error) {
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	if info, err := os.Stat("/workspace"); err == nil && info.IsDir() {
 		cmd.Dir = "/workspace"
 	}

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/darunshen/AIR/internal/guestapi"
 )
@@ -183,7 +184,15 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 
 	waitErrCh := make(chan error, 1)
 	go func() {
-		waitErrCh <- cmd.Wait()
+		err := cmd.Wait()
+		fields := map[string]any{
+			"pid": cmd.Process.Pid,
+		}
+		if err != nil {
+			fields["error"] = err.Error()
+		}
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "firecracker_exited", fields)
+		waitErrCh <- err
 	}()
 
 	waitForSocketFn := r.waitForSocketFn
@@ -477,8 +486,9 @@ func (r *firecrackerRuntime) DialTCP(sessionID, address string, timeout time.Dur
 		return nil, err
 	}
 
+	decoder := json.NewDecoder(reader)
 	var result guestapi.ProxyResult
-	if err := json.NewDecoder(reader).Decode(&result); err != nil {
+	if err := decoder.Decode(&result); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
@@ -497,9 +507,10 @@ func (r *firecrackerRuntime) DialTCP(sessionID, address string, timeout time.Dur
 		_ = conn.Close()
 		return nil, err
 	}
+	streamReader := streamAfterJSONDecode(decoder, reader)
 	return &bufferedConn{
 		Conn:   conn,
-		reader: reader,
+		reader: streamReader,
 	}, nil
 }
 
@@ -924,9 +935,50 @@ func performVSockHandshake(conn net.Conn, port uint32) (net.Conn, error) {
 
 type bufferedConn struct {
 	net.Conn
-	reader *bufio.Reader
+	reader io.Reader
 }
 
 func (c *bufferedConn) Read(p []byte) (int, error) {
 	return c.reader.Read(p)
+}
+
+func streamAfterJSONDecode(decoder *json.Decoder, reader io.Reader) io.Reader {
+	streamReader := reader
+	if buffered := decoder.Buffered(); buffered != nil {
+		streamReader = io.MultiReader(buffered, reader)
+	}
+	return &leadingWhitespaceTrimmingReader{
+		reader:   streamReader,
+		trimming: true,
+	}
+}
+
+type leadingWhitespaceTrimmingReader struct {
+	reader   io.Reader
+	trimming bool
+}
+
+func (r *leadingWhitespaceTrimmingReader) Read(p []byte) (int, error) {
+	for {
+		n, err := r.reader.Read(p)
+		if !r.trimming || n == 0 {
+			return n, err
+		}
+		i := 0
+		for i < n && unicode.IsSpace(rune(p[i])) {
+			i++
+		}
+		if i == 0 {
+			r.trimming = false
+			return n, err
+		}
+		if i < n {
+			copy(p, p[i:n])
+			r.trimming = false
+			return n - i, err
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
 }
