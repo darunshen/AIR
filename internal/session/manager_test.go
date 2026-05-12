@@ -11,7 +11,24 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/darunshen/AIR/internal/vm"
 )
+
+func TestOpenClaudeTransportDebugRequiresExplicitFlag(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("AIR_LOG_LEVEL", "debug")
+	t.Setenv("AIR_OPENCLAUDE_TRANSPORT_DEBUG", "")
+	if openClaudeTransportDebugEnabled() {
+		t.Fatal("expected openclaude transport debug disabled by default")
+	}
+
+	t.Setenv("AIR_OPENCLAUDE_TRANSPORT_DEBUG", "1")
+	if !openClaudeTransportDebugEnabled() {
+		t.Fatal("expected openclaude transport debug enabled when explicit flag is set")
+	}
+}
 
 func TestSessionLifecycle(t *testing.T) {
 	t.Helper()
@@ -34,6 +51,9 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 	if s.Provider != "local" {
 		t.Fatalf("expected local provider, got %q", s.Provider)
+	}
+	if s.Network != "none" {
+		t.Fatalf("expected default network none, got %q", s.Network)
 	}
 
 	if _, err := manager.Exec(s.ID, "echo hello > a.txt"); err != nil {
@@ -68,6 +88,58 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 }
 
+func TestSessionExecStreaming(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	s, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	var chunks []vm.ExecChunk
+	result, err := manager.ExecStreaming(s.ID, "printf first; sleep 0.1; printf second; >&2 printf boom", 5*time.Second, func(chunk vm.ExecChunk) {
+		chunks = append(chunks, chunk)
+	})
+	if err != nil {
+		t.Fatalf("exec streaming: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("unexpected exit code: %d", result.ExitCode)
+	}
+	if result.Stdout != "firstsecond" {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+	if result.Stderr != "boom" {
+		t.Fatalf("unexpected stderr: %q", result.Stderr)
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("expected streamed chunks, got %d", len(chunks))
+	}
+	if chunks[0].Stream != "stdout" || chunks[0].Data != "first" {
+		t.Fatalf("unexpected first chunk: %+v", chunks[0])
+	}
+
+	foundStderr := false
+	for _, chunk := range chunks {
+		if chunk.Stream == "stderr" && chunk.Data == "boom" {
+			foundStderr = true
+			break
+		}
+	}
+	if !foundStderr {
+		t.Fatalf("expected stderr chunk in %+v", chunks)
+	}
+}
+
 func TestSessionListAndInspect(t *testing.T) {
 	t.Helper()
 
@@ -97,6 +169,9 @@ func TestSessionListAndInspect(t *testing.T) {
 	}
 	if items[0].Provider != "local" {
 		t.Fatalf("expected local provider, got %q", items[0].Provider)
+	}
+	if items[0].Network != "none" {
+		t.Fatalf("expected default network none, got %q", items[0].Network)
 	}
 
 	inspect, err := manager.Inspect(s.ID)
@@ -201,6 +276,291 @@ func TestSessionListRefreshesStoppedStatus(t *testing.T) {
 	}
 }
 
+func TestSessionGCDryRunReportsStoppedSessions(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	running, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create running session: %v", err)
+	}
+	stopped, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create stopped session: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "runtime", "sessions", "local", stopped.ID)); err != nil {
+		t.Fatalf("remove stopped runtime dir: %v", err)
+	}
+
+	result, err := manager.GC(GCOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("gc dry-run: %v", err)
+	}
+	if result.Checked != 2 {
+		t.Fatalf("expected checked=2, got %d", result.Checked)
+	}
+	if result.Removed != 1 {
+		t.Fatalf("expected removed=1, got %d", result.Removed)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("expected skipped=1, got %d", result.Skipped)
+	}
+
+	items, err := manager.List()
+	if err != nil {
+		t.Fatalf("list sessions after dry-run: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected both sessions to remain after dry-run, got %d", len(items))
+	}
+	if items[0].ID != running.ID && items[1].ID != running.ID {
+		t.Fatalf("expected running session %s to remain", running.ID)
+	}
+}
+
+func TestSessionGCRemovesStoppedSessions(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	running, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create running session: %v", err)
+	}
+	stopped, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create stopped session: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "runtime", "sessions", "local", stopped.ID)); err != nil {
+		t.Fatalf("remove stopped runtime dir: %v", err)
+	}
+
+	result, err := manager.GC(GCOptions{})
+	if err != nil {
+		t.Fatalf("gc: %v", err)
+	}
+	if result.Removed != 1 {
+		t.Fatalf("expected removed=1, got %d", result.Removed)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("expected skipped=1, got %d", result.Skipped)
+	}
+
+	if _, err := manager.store.Get(stopped.ID); err == nil {
+		t.Fatalf("expected stopped session %s removed from store", stopped.ID)
+	}
+	if _, err := manager.store.Get(running.ID); err != nil {
+		t.Fatalf("expected running session %s to remain: %v", running.ID, err)
+	}
+}
+
+func TestSessionGCForceRemovesRunningSessions(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	running, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create running session: %v", err)
+	}
+
+	result, err := manager.GC(GCOptions{Force: true})
+	if err != nil {
+		t.Fatalf("gc force: %v", err)
+	}
+	if result.Checked != 1 {
+		t.Fatalf("expected checked=1, got %d", result.Checked)
+	}
+	if result.Removed != 1 {
+		t.Fatalf("expected removed=1, got %d", result.Removed)
+	}
+	if result.Skipped != 0 {
+		t.Fatalf("expected skipped=0, got %d", result.Skipped)
+	}
+	if len(result.Items) != 1 || result.Items[0].Reason != "force cleanup requested" {
+		t.Fatalf("unexpected gc items: %+v", result.Items)
+	}
+
+	if _, err := manager.store.Get(running.ID); err == nil {
+		t.Fatalf("expected running session %s removed from store", running.ID)
+	}
+	if _, err := os.Stat(filepath.Join(root, "runtime", "sessions", "local", running.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected runtime directory removed, got err=%v", err)
+	}
+}
+
+func TestSessionGCSkipsRunningOrphanWithoutForce(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	orphan, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create orphan candidate: %v", err)
+	}
+	if err := manager.store.Delete(orphan.ID); err != nil {
+		t.Fatalf("delete orphan from store: %v", err)
+	}
+
+	result, err := manager.GC(GCOptions{})
+	if err != nil {
+		t.Fatalf("gc without force: %v", err)
+	}
+	if result.Checked != 1 {
+		t.Fatalf("expected checked=1, got %d", result.Checked)
+	}
+	if result.Removed != 0 {
+		t.Fatalf("expected removed=0, got %d", result.Removed)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("expected skipped=1, got %d", result.Skipped)
+	}
+	if len(result.Items) != 1 || result.Items[0].Reason != "orphan runtime is still running" {
+		t.Fatalf("unexpected gc items: %+v", result.Items)
+	}
+	if _, err := os.Stat(filepath.Join(root, "runtime", "sessions", "local", orphan.ID)); err != nil {
+		t.Fatalf("expected orphan runtime directory to remain, got err=%v", err)
+	}
+}
+
+func TestSessionGCForceRemovesRunningOrphan(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	orphan, err := manager.Create()
+	if err != nil {
+		t.Fatalf("create orphan candidate: %v", err)
+	}
+	if err := manager.store.Delete(orphan.ID); err != nil {
+		t.Fatalf("delete orphan from store: %v", err)
+	}
+
+	result, err := manager.GC(GCOptions{Force: true})
+	if err != nil {
+		t.Fatalf("gc force on orphan: %v", err)
+	}
+	if result.Checked != 1 {
+		t.Fatalf("expected checked=1, got %d", result.Checked)
+	}
+	if result.Removed != 1 {
+		t.Fatalf("expected removed=1, got %d", result.Removed)
+	}
+	if result.Skipped != 0 {
+		t.Fatalf("expected skipped=0, got %d", result.Skipped)
+	}
+	if len(result.Items) != 1 || result.Items[0].Reason != "force cleanup requested for orphan runtime" {
+		t.Fatalf("unexpected gc items: %+v", result.Items)
+	}
+	if _, err := os.Stat(filepath.Join(root, "runtime", "sessions", "local", orphan.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected orphan runtime directory removed, got err=%v", err)
+	}
+}
+
+func TestSessionGCForceRemovesOrphanFirecrackerProcessDir(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	sessionID := "sess_orphanprocess123"
+	oldList := listProcessCmdlines
+	oldKill := killPID
+	defer func() {
+		listProcessCmdlines = oldList
+		killPID = oldKill
+	}()
+
+	listProcessCmdlines = func() ([]processCmdline, error) {
+		return []processCmdline{
+			{
+				PID: 101,
+				Args: []string{
+					"/tmp/air-ubuntu-assets/firecracker",
+					"--api-sock",
+					filepath.Join(root, "runtime", "sessions", "firecracker", sessionID, "firecracker.sock"),
+				},
+			},
+			{
+				PID: 202,
+				Args: []string{
+					"/tmp/air",
+					"__firecracker-egress-proxy",
+					filepath.Join(root, "runtime", "sessions", "firecracker", sessionID, "firecracker.vsock_18080"),
+				},
+			},
+		}, nil
+	}
+
+	var killed []int
+	killPID = func(pid int) error {
+		killed = append(killed, pid)
+		return nil
+	}
+
+	result, err := manager.GC(GCOptions{Force: true})
+	if err != nil {
+		t.Fatalf("gc force orphan process dir: %v", err)
+	}
+	if result.Checked != 1 {
+		t.Fatalf("expected checked=1, got %d", result.Checked)
+	}
+	if result.Removed != 1 {
+		t.Fatalf("expected removed=1, got %d", result.Removed)
+	}
+	if result.Skipped != 0 {
+		t.Fatalf("expected skipped=0, got %d", result.Skipped)
+	}
+	if len(result.Items) != 1 || result.Items[0].Reason != "force cleanup requested for orphan firecracker processes" {
+		t.Fatalf("unexpected gc items: %+v", result.Items)
+	}
+	if len(killed) != 2 || killed[0] != 202 || killed[1] != 101 {
+		t.Fatalf("unexpected killed pids: %+v", killed)
+	}
+}
+
 func TestCreateWithExplicitProvider(t *testing.T) {
 	t.Helper()
 
@@ -208,8 +568,8 @@ func TestCreateWithExplicitProvider(t *testing.T) {
 	assetsDir := filepath.Join(root, "assets", "firecracker")
 	for _, path := range []string{
 		filepath.Join(assetsDir, "firecracker"),
-		filepath.Join(assetsDir, "hello-vmlinux.bin"),
-		filepath.Join(assetsDir, "hello-rootfs.ext4"),
+		filepath.Join(assetsDir, "vmlinux.bin"),
+		filepath.Join(assetsDir, "ubuntu-rootfs.ext4"),
 		filepath.Join(root, "dev", "kvm"),
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -233,8 +593,8 @@ func TestCreateWithExplicitProvider(t *testing.T) {
 
 	t.Setenv("AIR_VM_RUNTIME", "local")
 	t.Setenv("AIR_FIRECRACKER_BIN", filepath.Join(root, "assets", "firecracker", "firecracker"))
-	t.Setenv("AIR_FIRECRACKER_KERNEL", filepath.Join(root, "assets", "firecracker", "hello-vmlinux.bin"))
-	t.Setenv("AIR_FIRECRACKER_ROOTFS", filepath.Join(root, "assets", "firecracker", "hello-rootfs.ext4"))
+	t.Setenv("AIR_FIRECRACKER_KERNEL", filepath.Join(root, "assets", "firecracker", "vmlinux.bin"))
+	t.Setenv("AIR_FIRECRACKER_ROOTFS", filepath.Join(root, "assets", "firecracker", "ubuntu-rootfs.ext4"))
 	t.Setenv("AIR_KVM_DEVICE", filepath.Join(root, "dev", "kvm"))
 
 	manager, err := NewManagerWithPaths(
@@ -326,6 +686,38 @@ func TestExportWorkspace(t *testing.T) {
 	hostOutputPath := filepath.Join(workspace, "output.txt")
 	if _, err := os.Stat(hostOutputPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected host workspace to stay unchanged, got err=%v", err)
+	}
+}
+
+func TestCreateWithOptionsStoresNetwork(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	s, err := manager.CreateWithOptions(CreateOptions{
+		Provider: "local",
+		Network:  "full",
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if s.Network != "full" {
+		t.Fatalf("expected full network, got %q", s.Network)
+	}
+
+	inspect, err := manager.Inspect(s.ID)
+	if err != nil {
+		t.Fatalf("inspect session: %v", err)
+	}
+	if inspect.Session.Network != "full" {
+		t.Fatalf("expected inspect session network full, got %q", inspect.Session.Network)
 	}
 }
 
@@ -685,6 +1077,10 @@ func TestRenderOpenClaudeStartCommandIncludesWhitelistedEnv(t *testing.T) {
 		"GRPC_PORT='50051'",
 		"HOME='/run/air/openclaude/sess_123/home'",
 		"CLAUDE_CONFIG_DIR='/run/air/openclaude/sess_123/home/.openclaude'",
+		"PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'",
+		"SHELL='/bin/bash'",
+		"CLAUDE_CODE_SHELL='/bin/bash'",
+		"/bin/sh -c 'bun run scripts/start-grpc.ts'",
 		"CLAUDE_CODE_USE_OPENAI='1'",
 		"OPENAI_API_KEY='sk-test'",
 		"OPENAI_MODEL='deepseek-chat'",
@@ -692,6 +1088,17 @@ func TestRenderOpenClaudeStartCommandIncludesWhitelistedEnv(t *testing.T) {
 		if !strings.Contains(command, part) {
 			t.Fatalf("expected command to contain %q, got %s", part, command)
 		}
+	}
+}
+
+func TestOpenClaudePATHPrefersExplicitEnv(t *testing.T) {
+	t.Helper()
+
+	if got := openClaudePATH(map[string]string{"PATH": "/custom/bin:/usr/bin"}); got != "/custom/bin:/usr/bin" {
+		t.Fatalf("expected explicit PATH to be preserved, got %q", got)
+	}
+	if got := openClaudePATH(map[string]string{}); got != defaultOpenClaudePATH {
+		t.Fatalf("expected default PATH %q, got %q", defaultOpenClaudePATH, got)
 	}
 }
 
@@ -758,7 +1165,7 @@ func TestApplyOpenClaudeRuntimeEnvStripsAnthropicEnvWhenUsingOpenAI(t *testing.T
 	}
 }
 
-func TestApplyOpenClaudeRuntimeEnvMapsAnthropicAuthToken(t *testing.T) {
+func TestApplyOpenClaudeRuntimeEnvMapsAnthropicAuthTokenToAPIKeyForOpenClaude(t *testing.T) {
 	t.Helper()
 
 	env := applyOpenClaudeRuntimeEnv("firecracker", map[string]string{
@@ -767,8 +1174,8 @@ func TestApplyOpenClaudeRuntimeEnvMapsAnthropicAuthToken(t *testing.T) {
 		"ANTHROPIC_MODEL":      "deepseek-v4-pro",
 		"OPENAI_API_KEY":       "sk-openai",
 	})
-	if env["ANTHROPIC_AUTH_TOKEN"] != "sk-anthropic" {
-		t.Fatalf("expected ANTHROPIC_AUTH_TOKEN preserved, got %+v", env)
+	if _, ok := env["ANTHROPIC_AUTH_TOKEN"]; ok {
+		t.Fatalf("expected ANTHROPIC_AUTH_TOKEN to be removed before OpenClaude launch, got %+v", env)
 	}
 	if env["ANTHROPIC_API_KEY"] != "sk-anthropic" {
 		t.Fatalf("expected ANTHROPIC_API_KEY mirrored from auth token, got %+v", env)
@@ -816,6 +1223,47 @@ func TestBuildOpenClaudeGlobalConfigIncludesManagedAnthropicKey(t *testing.T) {
 	}
 	if got := env["ANTHROPIC_MODEL"]; got != "deepseek-v4-pro" {
 		t.Fatalf("expected ANTHROPIC_MODEL in env, got %#v", got)
+	}
+}
+
+func TestBuildOpenClaudeDiagnosticConfigMasksSecretsAndIncludesMode(t *testing.T) {
+	t.Helper()
+
+	meta := &openClaudeMetadata{
+		SessionID: "sess_diag",
+		Provider:  "firecracker",
+		RepoPath:  "/opt/openclaude",
+		Host:      "127.0.0.1",
+		Port:      50051,
+	}
+	body := buildOpenClaudeDiagnosticConfig(map[string]string{
+		"ANTHROPIC_AUTH_TOKEN": "sk-1234567890ABCDEFGHIJKLMN",
+		"ANTHROPIC_BASE_URL":   "https://api.deepseek.com/anthropic",
+		"ANTHROPIC_MODEL":      "deepseek-v4-pro",
+		"HTTP_PROXY":           "http://127.0.0.1:18080",
+	}, meta)
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("unmarshal diagnostic: %v", err)
+	}
+
+	if got := decoded["event"]; got != "air_openclaude_launch" {
+		t.Fatalf("unexpected event: %#v", got)
+	}
+
+	selected, ok := decoded["selected_env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected selected_env object, got %#v", decoded["selected_env"])
+	}
+	if got := selected["ANTHROPIC_MODEL"]; got != "deepseek-v4-pro" {
+		t.Fatalf("unexpected ANTHROPIC_MODEL: %#v", got)
+	}
+	if got := selected["ANTHROPIC_AUTH_TOKEN"]; got != normalizeOpenClaudeAPIKeyForConfig("sk-1234567890ABCDEFGHIJKLMN") {
+		t.Fatalf("unexpected masked auth token: %#v", got)
+	}
+	if _, ok := selected["ANTHROPIC_API_KEY"]; ok {
+		t.Fatalf("expected ANTHROPIC_API_KEY to remain absent, got %#v", selected["ANTHROPIC_API_KEY"])
 	}
 }
 

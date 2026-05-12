@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/darunshen/AIR/internal/session"
 )
 
 func TestParseSessionCreateFlags(t *testing.T) {
@@ -38,6 +40,21 @@ func TestParseSessionCreateFlags(t *testing.T) {
 			name: "workspace",
 			args: []string{"--provider", "firecracker", "--workspace", "/tmp/repo"},
 			want: sessionCreateCLIOptions{Provider: "firecracker", WorkspacePath: "/tmp/repo"},
+		},
+		{
+			name: "network",
+			args: []string{"--provider", "firecracker", "--network", "full"},
+			want: sessionCreateCLIOptions{Provider: "firecracker", Network: "full"},
+		},
+		{
+			name: "memory",
+			args: []string{"--provider", "firecracker", "--memory-mib", "2048"},
+			want: sessionCreateCLIOptions{Provider: "firecracker", MemoryMiB: 2048},
+		},
+		{
+			name: "storage",
+			args: []string{"--provider", "firecracker", "--storage-mib", "4096"},
+			want: sessionCreateCLIOptions{Provider: "firecracker", StorageMiB: 4096},
 		},
 		{
 			name:    "missing value",
@@ -75,6 +92,91 @@ func TestParseSessionCreateFlags(t *testing.T) {
 	}
 }
 
+func TestParseSessionExecFlags(t *testing.T) {
+	t.Helper()
+
+	opts, err := parseSessionExecFlags([]string{"sess_123", "--timeout", "5m", "echo hello"})
+	if err != nil {
+		t.Fatalf("parse session exec flags: %v", err)
+	}
+	if opts.SessionID != "sess_123" {
+		t.Fatalf("unexpected session id: %q", opts.SessionID)
+	}
+	if opts.Timeout != 5*time.Minute {
+		t.Fatalf("unexpected timeout: %s", opts.Timeout)
+	}
+	if opts.Command != "echo hello" {
+		t.Fatalf("unexpected command: %q", opts.Command)
+	}
+}
+
+func TestParseSessionExecFlagsDefaultsTimeout(t *testing.T) {
+	t.Helper()
+
+	opts, err := parseSessionExecFlags([]string{"sess_123", "echo hello"})
+	if err != nil {
+		t.Fatalf("parse session exec flags: %v", err)
+	}
+	if opts.Timeout != 30*time.Second {
+		t.Fatalf("unexpected default timeout: %s", opts.Timeout)
+	}
+}
+
+func TestParseSessionExecFlagsRejectsInvalidInput(t *testing.T) {
+	t.Helper()
+
+	tests := [][]string{
+		{"sess_123", "--timeout", "0s", "echo hello"},
+		{"sess_123", "--bad", "echo hello"},
+		{"sess_123"},
+	}
+	for _, args := range tests {
+		if _, err := parseSessionExecFlags(args); err == nil {
+			t.Fatalf("expected error for args=%v", args)
+		}
+	}
+}
+
+func TestParseSessionGCFlags(t *testing.T) {
+	t.Helper()
+
+	opts, err := parseSessionGCFlags([]string{"--dry-run", "--force", "--root", "/tmp/runtime/sessions"})
+	if err != nil {
+		t.Fatalf("parse session gc flags: %v", err)
+	}
+	if !opts.DryRun {
+		t.Fatal("expected dry-run=true")
+	}
+	if !opts.Force {
+		t.Fatal("expected force=true")
+	}
+	if opts.Root != "/tmp/runtime/sessions" {
+		t.Fatalf("unexpected root: %q", opts.Root)
+	}
+
+	opts, err = parseSessionGCFlags(nil)
+	if err != nil {
+		t.Fatalf("parse empty session gc flags: %v", err)
+	}
+	if opts.DryRun {
+		t.Fatal("expected default dry-run=false")
+	}
+	if opts.Force {
+		t.Fatal("expected default force=false")
+	}
+}
+
+func TestParseSessionGCFlagsRejectsUnknownFlag(t *testing.T) {
+	t.Helper()
+
+	if _, err := parseSessionGCFlags([]string{"--bad"}); err == nil {
+		t.Fatal("expected error for unknown gc flag")
+	}
+	if _, err := parseSessionGCFlags([]string{"--root"}); err == nil {
+		t.Fatal("expected error for missing root value")
+	}
+}
+
 func TestCopyTailLines(t *testing.T) {
 	t.Helper()
 
@@ -102,8 +204,10 @@ func TestParseRunFlagsSupportsResourceOverrides(t *testing.T) {
 
 	opts, command, err := parseRunFlags([]string{
 		"--provider", "firecracker",
+		"--network", "full",
 		"--timeout", "45s",
 		"--memory-mib", "512",
+		"--storage-mib", "4096",
 		"--vcpu-count", "2",
 		"--",
 		"echo", "hello",
@@ -117,8 +221,14 @@ func TestParseRunFlagsSupportsResourceOverrides(t *testing.T) {
 	if opts.Timeout != 45*time.Second {
 		t.Fatalf("unexpected timeout: %s", opts.Timeout)
 	}
+	if opts.Network != "full" {
+		t.Fatalf("unexpected network: %s", opts.Network)
+	}
 	if opts.MemoryMiB != 512 {
 		t.Fatalf("unexpected memory: %d", opts.MemoryMiB)
+	}
+	if opts.StorageMiB != 4096 {
+		t.Fatalf("unexpected storage: %d", opts.StorageMiB)
 	}
 	if opts.VCPUCount != 2 {
 		t.Fatalf("unexpected vcpu count: %d", opts.VCPUCount)
@@ -188,6 +298,9 @@ func TestParseChatFlagsSupportsReconfigure(t *testing.T) {
 
 	opts, err := parseChatFlags([]string{
 		"--provider", "firecracker",
+		"--network", "full",
+		"--memory-mib", "2048",
+		"--storage-mib", "4096",
 		"--workspace", "/tmp/repo",
 		"--listen", "127.0.0.1:50060",
 		"--reconfigure",
@@ -201,11 +314,130 @@ func TestParseChatFlagsSupportsReconfigure(t *testing.T) {
 	if opts.Provider != "firecracker" {
 		t.Fatalf("unexpected provider: %q", opts.Provider)
 	}
+	if opts.Network != "full" {
+		t.Fatalf("unexpected network: %q", opts.Network)
+	}
+	if opts.MemoryMiB != 2048 {
+		t.Fatalf("unexpected memory: %d", opts.MemoryMiB)
+	}
+	if opts.StorageMiB != 4096 {
+		t.Fatalf("unexpected storage: %d", opts.StorageMiB)
+	}
 	if opts.WorkspacePath != "/tmp/repo" {
 		t.Fatalf("unexpected workspace: %q", opts.WorkspacePath)
 	}
 	if opts.ListenAddress != "127.0.0.1:50060" {
 		t.Fatalf("unexpected listen address: %q", opts.ListenAddress)
+	}
+}
+
+func TestParseChatGCFlags(t *testing.T) {
+	t.Helper()
+
+	opts, err := parseChatGCFlags([]string{"--dry-run", "--force"})
+	if err != nil {
+		t.Fatalf("parse chat gc flags: %v", err)
+	}
+	if !opts.DryRun {
+		t.Fatal("expected dry-run=true")
+	}
+	if !opts.Force {
+		t.Fatal("expected force=true")
+	}
+}
+
+func TestParseGCFlags(t *testing.T) {
+	t.Helper()
+
+	opts, err := parseGCFlags([]string{"--all"})
+	if err != nil {
+		t.Fatalf("parse gc flags: %v", err)
+	}
+	if !opts.All {
+		t.Fatal("expected all=true")
+	}
+	if _, err := parseGCFlags([]string{"--bad"}); err == nil {
+		t.Fatal("expected error for unknown gc flag")
+	}
+}
+
+func TestGCAirChatProcesses(t *testing.T) {
+	t.Helper()
+
+	oldList := sessionListProcessCmdlines
+	oldKill := sessionKillPID
+	defer func() {
+		sessionListProcessCmdlines = oldList
+		sessionKillPID = oldKill
+	}()
+
+	sessionListProcessCmdlines = func() ([]hostProcessInfo, error) {
+		return []hostProcessInfo{
+			{PID: 10, PPID: 1, Args: []string{"/tmp/air", "chat", "--provider", "firecracker"}},
+			{PID: 11, PPID: 10, Args: []string{"bun", "run", "/tmp/air-openclaude-chat-123.mjs"}},
+			{PID: 20, PPID: 1, Args: []string{"/tmp/air", "session", "list"}},
+		}, nil
+	}
+
+	var killed []int
+	sessionKillPID = func(pid int) error {
+		killed = append(killed, pid)
+		return nil
+	}
+
+	result, err := gcAirChatProcesses(chatGCCLIOptions{Force: true})
+	if err != nil {
+		t.Fatalf("gc air chat processes: %v", err)
+	}
+	if result.Checked != 2 {
+		t.Fatalf("expected checked=2, got %d", result.Checked)
+	}
+	if result.Removed != 2 {
+		t.Fatalf("expected removed=2, got %d", result.Removed)
+	}
+	if result.Skipped != 0 {
+		t.Fatalf("expected skipped=0, got %d", result.Skipped)
+	}
+	if len(killed) != 2 || killed[0] != 11 || killed[1] != 10 {
+		t.Fatalf("unexpected killed pids: %+v", killed)
+	}
+}
+
+func TestRunUnifiedGC(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	manager, err := session.NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	oldList := sessionListProcessCmdlines
+	oldKill := sessionKillPID
+	defer func() {
+		sessionListProcessCmdlines = oldList
+		sessionKillPID = oldKill
+	}()
+	sessionListProcessCmdlines = func() ([]hostProcessInfo, error) {
+		return []hostProcessInfo{
+			{PID: 10, PPID: 1, Args: []string{"/tmp/air", "chat", "--provider", "firecracker"}},
+			{PID: 11, PPID: 10, Args: []string{"bun", "run", "/tmp/air-openclaude-chat-123.mjs"}},
+		}, nil
+	}
+	sessionKillPID = func(pid int) error { return nil }
+
+	result, err := runUnifiedGC(manager)
+	if err != nil {
+		t.Fatalf("run unified gc: %v", err)
+	}
+	if result.Session == nil || result.Chat == nil {
+		t.Fatalf("expected both session and chat results, got %+v", result)
+	}
+	if result.Chat.Checked != 2 || result.Chat.Removed != 2 {
+		t.Fatalf("unexpected chat gc result: %+v", result.Chat)
 	}
 }
 
@@ -252,6 +484,9 @@ func TestParseOpenClaudeStartFlags(t *testing.T) {
 	opts, err := parseOpenClaudeStartFlags([]string{
 		"--session", "sess_123",
 		"--provider", "firecracker",
+		"--network", "full",
+		"--memory-mib", "2048",
+		"--storage-mib", "4096",
 		"--repo", "/tmp/openclaude",
 		"--guest-repo", "/opt/openclaude",
 		"--host", "0.0.0.0",
@@ -266,6 +501,15 @@ func TestParseOpenClaudeStartFlags(t *testing.T) {
 	}
 	if opts.Provider != "firecracker" {
 		t.Fatalf("unexpected provider: %q", opts.Provider)
+	}
+	if opts.Network != "full" {
+		t.Fatalf("unexpected network: %q", opts.Network)
+	}
+	if opts.MemoryMiB != 2048 {
+		t.Fatalf("unexpected memory: %d", opts.MemoryMiB)
+	}
+	if opts.StorageMiB != 4096 {
+		t.Fatalf("unexpected storage: %d", opts.StorageMiB)
 	}
 	if opts.RepoPath != "/tmp/openclaude" {
 		t.Fatalf("unexpected repo path: %q", opts.RepoPath)
@@ -377,6 +621,9 @@ func TestParseOpenClaudeRunFlags(t *testing.T) {
 	t.Setenv("AIR_OPENCLAUDE_REPO", "/tmp/openclaude")
 	opts, err := parseOpenClaudeRunFlags([]string{
 		"--provider", "firecracker",
+		"--network", "full",
+		"--memory-mib", "2048",
+		"--storage-mib", "4096",
 		"--workspace", "/tmp/repo",
 		"--guest-repo", "/opt/openclaude",
 		"--listen", "127.0.0.1:6000",
@@ -386,6 +633,15 @@ func TestParseOpenClaudeRunFlags(t *testing.T) {
 	}
 	if opts.Provider != "firecracker" {
 		t.Fatalf("unexpected provider: %q", opts.Provider)
+	}
+	if opts.Network != "full" {
+		t.Fatalf("unexpected network: %q", opts.Network)
+	}
+	if opts.MemoryMiB != 2048 {
+		t.Fatalf("unexpected memory: %d", opts.MemoryMiB)
+	}
+	if opts.StorageMiB != 4096 {
+		t.Fatalf("unexpected storage: %d", opts.StorageMiB)
 	}
 	if opts.WorkspacePath != "/tmp/repo" {
 		t.Fatalf("unexpected workspace path: %q", opts.WorkspacePath)
@@ -433,7 +689,7 @@ func TestEnsureOpenClaudeGuestBootArgsSetsInitForAlpineGuest(t *testing.T) {
 	t.Helper()
 
 	t.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "")
-	ensureOpenClaudeGuestBootArgs("/tmp/assets/firecracker/openclaude-alpine-rootfs.ext4")
+	ensureOpenClaudeGuestBootArgs("/tmp/assets/firecracker/openclaude-ubuntu-rootfs.ext4")
 	if got := os.Getenv("AIR_FIRECRACKER_BOOT_ARGS"); got != "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init" {
 		t.Fatalf("unexpected boot args: %q", got)
 	}
@@ -443,7 +699,7 @@ func TestEnsureOpenClaudeGuestBootArgsDoesNotOverrideExplicitValue(t *testing.T)
 	t.Helper()
 
 	t.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "console=ttyS0 custom=yes")
-	ensureOpenClaudeGuestBootArgs("/tmp/assets/firecracker/openclaude-alpine-rootfs.ext4")
+	ensureOpenClaudeGuestBootArgs("/tmp/assets/firecracker/openclaude-ubuntu-rootfs.ext4")
 	if got := os.Getenv("AIR_FIRECRACKER_BOOT_ARGS"); got != "console=ttyS0 custom=yes" {
 		t.Fatalf("unexpected boot args override: %q", got)
 	}
@@ -497,12 +753,13 @@ func TestApplyChatProfileEnvAnthropic(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-openai")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 	t.Setenv("ANTHROPIC_MODEL", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 
 	applyChatProfileEnv(&chatProfile{
 		ProviderMode:       "anthropic",
 		AnthropicBaseURL:   "https://api.deepseek.com/anthropic",
-		AnthropicModel:     "deepseek-v4-pro",
+		AnthropicModel:     "deepseek-v4-pro[1m]",
 		AnthropicAuthToken: "sk-anthropic",
 	})
 
@@ -512,7 +769,27 @@ func TestApplyChatProfileEnvAnthropic(t *testing.T) {
 	if got := os.Getenv("ANTHROPIC_BASE_URL"); got != "https://api.deepseek.com/anthropic" {
 		t.Fatalf("unexpected anthropic base url: %q", got)
 	}
+	if got := os.Getenv("ANTHROPIC_MODEL"); got != "deepseek-v4-pro[1m]" {
+		t.Fatalf("unexpected anthropic model: %q", got)
+	}
+	if got := os.Getenv("ANTHROPIC_API_KEY"); got != "sk-anthropic" {
+		t.Fatalf("unexpected anthropic api key: %q", got)
+	}
+	if got := os.Getenv("ANTHROPIC_AUTH_TOKEN"); got != "sk-anthropic" {
+		t.Fatalf("unexpected anthropic auth token: %q", got)
+	}
 	if got := os.Getenv("OPENAI_BASE_URL"); got != "" {
 		t.Fatalf("expected openai base url cleared, got %q", got)
+	}
+}
+
+func TestOpenClaudeChatScriptDefaultsToAutoApproveBash(t *testing.T) {
+	t.Helper()
+
+	if !strings.Contains(openClaudeChatScript, "AIR_OPENCLAUDE_AUTO_APPROVE_TOOLS || 'Bash'") {
+		t.Fatalf("expected chat script to default auto-approve Bash")
+	}
+	if !strings.Contains(openClaudeChatScript, "auto: y") {
+		t.Fatalf("expected chat script to print auto-approve marker")
 	}
 }

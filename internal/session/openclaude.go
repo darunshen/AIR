@@ -24,6 +24,7 @@ const (
 	defaultOpenClaudeHost         = "127.0.0.1"
 	defaultOpenClaudePort         = 50051
 	defaultOpenClaudeReadyTimeout = 180 * time.Second
+	defaultOpenClaudePATH         = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
 
 var ErrOpenClaudeNotConfigured = errors.New("openclaude is not configured for this session")
@@ -31,6 +32,9 @@ var ErrOpenClaudeNotConfigured = errors.New("openclaude is not configured for th
 type OpenClaudeStartOptions struct {
 	SessionID     string
 	Provider      string
+	Network       string
+	MemoryMiB     int
+	StorageMiB    int
 	RepoPath      string
 	GuestRepoPath string
 	WorkspacePath string
@@ -91,6 +95,9 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 	if sessionID == "" {
 		s, err := m.CreateWithOptions(CreateOptions{
 			Provider:      opts.Provider,
+			Network:       opts.Network,
+			MemoryMiB:     opts.MemoryMiB,
+			StorageMiB:    opts.StorageMiB,
 			WorkspacePath: opts.WorkspacePath,
 		})
 		if err != nil {
@@ -350,11 +357,13 @@ func (m *Manager) ForwardOpenClaude(ctx context.Context, sessionID string, opts 
 			if openClaudeTransportDebugEnabled() {
 				fmt.Fprintf(os.Stderr, "air: forward dial connected session=%s target=%s:%d\n", sessionID, defaultOpenClaudeHost, defaultOpenClaudePort)
 			}
-			bridgeConnsWithLogger(
-				sessionID,
-				&loggedConn{Conn: clientConn, sessionID: sessionID, name: "client"},
-				&loggedConn{Conn: targetConn, sessionID: sessionID, name: "target"},
-			)
+			left := net.Conn(clientConn)
+			right := net.Conn(targetConn)
+			if openClaudeTransportDebugEnabled() {
+				left = &loggedConn{Conn: clientConn, sessionID: sessionID, name: "client"}
+				right = &loggedConn{Conn: targetConn, sessionID: sessionID, name: "target"}
+			}
+			bridgeConnsWithLogger(sessionID, left, right)
 		}()
 	}
 }
@@ -529,6 +538,7 @@ func renderOpenClaudeStartCommand(meta *openClaudeMetadata, env map[string]strin
 		"AIR_OPENCLAUDE_SESSION_ID=" + shellQuote(meta.SessionID),
 		"HOME=" + shellQuote(configHome),
 		"CLAUDE_CONFIG_DIR=" + shellQuote(configDir),
+		"PATH=" + shellQuote(openClaudePATH(env)),
 		"SHELL='/bin/bash'",
 		"CLAUDE_CODE_SHELL='/bin/bash'",
 	}
@@ -552,15 +562,15 @@ func renderOpenClaudeStartCommand(meta *openClaudeMetadata, env map[string]strin
 
 func buildOpenClaudeDiagnosticConfig(env map[string]string, meta *openClaudeMetadata) string {
 	type diagnostic struct {
-		Event            string            `json:"event"`
-		SessionID        string            `json:"session_id"`
-		Provider         string            `json:"provider"`
-		RepoPath         string            `json:"repo_path"`
-		Host             string            `json:"host"`
-		Port             int               `json:"port"`
-		EnvKeys          []string          `json:"env_keys"`
-		SelectedEnv      map[string]string `json:"selected_env,omitempty"`
-		GeneratedAt      string            `json:"generated_at"`
+		Event       string            `json:"event"`
+		SessionID   string            `json:"session_id"`
+		Provider    string            `json:"provider"`
+		RepoPath    string            `json:"repo_path"`
+		Host        string            `json:"host"`
+		Port        int               `json:"port"`
+		EnvKeys     []string          `json:"env_keys"`
+		SelectedEnv map[string]string `json:"selected_env,omitempty"`
+		GeneratedAt string            `json:"generated_at"`
 	}
 
 	selected := map[string]string{}
@@ -570,6 +580,7 @@ func buildOpenClaudeDiagnosticConfig(env map[string]string, meta *openClaudeMeta
 		"OPENAI_MODEL",
 		"ANTHROPIC_BASE_URL",
 		"ANTHROPIC_MODEL",
+		"PATH",
 		"HTTP_PROXY",
 		"HTTPS_PROXY",
 		"ALL_PROXY",
@@ -633,6 +644,13 @@ func buildOpenClaudeGlobalConfig(env map[string]string) string {
 		return "{}"
 	}
 	return string(body)
+}
+
+func openClaudePATH(env map[string]string) string {
+	if value := strings.TrimSpace(env["PATH"]); value != "" {
+		return value
+	}
+	return defaultOpenClaudePATH
 }
 
 func normalizeOpenClaudeAPIKeyForConfig(apiKey string) string {
@@ -860,5 +878,11 @@ func (c *loggedConn) Write(p []byte) (int, error) {
 }
 
 func openClaudeTransportDebugEnabled() bool {
-	return strings.TrimSpace(os.Getenv("AIR_DEBUG_TRANSPORT")) == "1"
+	value := strings.TrimSpace(os.Getenv("AIR_OPENCLAUDE_TRANSPORT_DEBUG"))
+	switch strings.ToLower(value) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

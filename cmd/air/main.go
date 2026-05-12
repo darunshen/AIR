@@ -22,6 +22,7 @@ import (
 	"github.com/darunshen/AIR/internal/buildinfo"
 	"github.com/darunshen/AIR/internal/egressproxy"
 	"github.com/darunshen/AIR/internal/install"
+	"github.com/darunshen/AIR/internal/logging"
 	"github.com/darunshen/AIR/internal/model"
 	"github.com/darunshen/AIR/internal/session"
 	"github.com/darunshen/AIR/internal/vm"
@@ -91,7 +92,32 @@ func main() {
 		if !report.Ready {
 			os.Exit(1)
 		}
+	case "gc":
+		opts, err := parseGCFlags(args[1:])
+		if err != nil {
+			exitErr(err)
+		}
+		if !opts.All {
+			exitErr(errors.New("usage: air gc --all"))
+		}
+		result, err := runUnifiedGC(manager)
+		if err != nil {
+			exitErr(err)
+		}
+		printJSON(result)
 	case "chat":
+		if len(args) >= 2 && args[1] == "gc" {
+			opts, err := parseChatGCFlags(args[2:])
+			if err != nil {
+				exitErr(err)
+			}
+			result, err := gcAirChatProcesses(opts)
+			if err != nil {
+				exitErr(err)
+			}
+			printJSON(result)
+			return
+		}
 		opts, err := parseChatFlags(args[1:])
 		if err != nil {
 			exitErr(err)
@@ -106,8 +132,10 @@ func main() {
 		}
 		result, runErr := manager.Run(command, session.RunOptions{
 			Provider:      opts.Provider,
+			Network:       opts.Network,
 			Timeout:       opts.Timeout,
 			MemoryMiB:     opts.MemoryMiB,
+			StorageMiB:    opts.StorageMiB,
 			VCPUCount:     opts.VCPUCount,
 			WorkspacePath: opts.WorkspacePath,
 		})
@@ -133,6 +161,9 @@ func main() {
 			}
 			s, err := manager.CreateWithOptions(session.CreateOptions{
 				Provider:      opts.Provider,
+				Network:       opts.Network,
+				MemoryMiB:     opts.MemoryMiB,
+				StorageMiB:    opts.StorageMiB,
 				WorkspacePath: opts.WorkspacePath,
 			})
 			if err != nil {
@@ -140,19 +171,37 @@ func main() {
 			}
 			fmt.Println(s.ID)
 		case "exec":
-			if len(args) < 4 {
+			opts, err := parseSessionExecFlags(args[2:])
+			if err != nil {
 				usage()
 				os.Exit(1)
 			}
-			result, err := manager.Exec(args[2], args[3])
+			if logging.InfoEnabled() {
+				fmt.Fprintf(os.Stderr, "air: session exec start session=%s command=%q\n", opts.SessionID, opts.Command)
+			}
+			streamed := false
+			result, err := manager.ExecStreaming(opts.SessionID, opts.Command, opts.Timeout, func(chunk vm.ExecChunk) {
+				streamed = true
+				switch chunk.Stream {
+				case "stdout":
+					fmt.Print(chunk.Data)
+				case "stderr":
+					fmt.Fprint(os.Stderr, chunk.Data)
+				}
+			})
 			if err != nil {
 				exitErr(err)
 			}
-			if result.Stdout != "" {
-				fmt.Print(result.Stdout)
+			if !streamed {
+				if result.Stdout != "" {
+					fmt.Print(result.Stdout)
+				}
+				if result.Stderr != "" {
+					fmt.Fprint(os.Stderr, result.Stderr)
+				}
 			}
-			if result.Stderr != "" {
-				fmt.Fprint(os.Stderr, result.Stderr)
+			if logging.InfoEnabled() {
+				fmt.Fprintf(os.Stderr, "air: session exec done session=%s exit_code=%d timed_out=%t\n", opts.SessionID, result.ExitCode, result.TimedOut)
 			}
 			fmt.Fprintf(os.Stderr, "request_id=%s duration_ms=%d\n", result.RequestID, result.Duration.Milliseconds())
 			if result.ExitCode != 0 {
@@ -172,6 +221,23 @@ func main() {
 				exitErr(err)
 			}
 			printSessions(sessions)
+		case "gc":
+			opts, err := parseSessionGCFlags(args[2:])
+			if err != nil {
+				exitErr(err)
+			}
+			gcManager := manager
+			if opts.Root != "" {
+				gcManager, err = session.NewManagerWithPaths(filepath.Join(opts.Root, "store.json"), opts.Root)
+				if err != nil {
+					exitErr(err)
+				}
+			}
+			result, err := gcManager.GC(session.GCOptions{DryRun: opts.DryRun, Force: opts.Force})
+			if err != nil {
+				exitErr(err)
+			}
+			printJSON(result)
 		case "inspect":
 			if len(args) < 3 {
 				usage()
@@ -343,22 +409,26 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air version")
 	fmt.Fprintln(os.Stderr, "  air init firecracker [--source official|custom] [--dir PATH] [--yes]")
 	fmt.Fprintln(os.Stderr, "  air doctor [--provider local|firecracker] [--human]")
-	fmt.Fprintln(os.Stderr, "  air chat [--provider local|firecracker] [--workspace PATH] [--listen 127.0.0.1:50052] [--reconfigure]")
-	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--workspace PATH] [--human] -- <command>")
-	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker] [--workspace PATH]")
+	fmt.Fprintln(os.Stderr, "  air gc --all")
+	fmt.Fprintln(os.Stderr, "  air chat [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--workspace PATH] [--listen 127.0.0.1:50052] [--reconfigure]")
+	fmt.Fprintln(os.Stderr, "  air chat gc [--dry-run] [--force]")
+	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--network none|full] [--timeout 30s] [--memory-mib 256] [--storage-mib 1024] [--vcpu-count 1] [--workspace PATH] [--human] -- <command>")
+	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--workspace PATH]")
+	fmt.Fprintln(os.Stderr, "  air session exec <session_id> [--timeout 30s] <command>")
 	fmt.Fprintln(os.Stderr, "  air session list")
+	fmt.Fprintln(os.Stderr, "  air session gc [--dry-run] [--force] [--root PATH]")
 	fmt.Fprintln(os.Stderr, "  air session inspect <id>")
 	fmt.Fprintln(os.Stderr, "  air session console <id> [--follow] [--tail=N]")
 	fmt.Fprintln(os.Stderr, "  air session events <id> [--follow] [--tail=N]")
 	fmt.Fprintln(os.Stderr, "  air session exec <id> \"<command>\"")
 	fmt.Fprintln(os.Stderr, "  air session export-workspace <id> <output-dir> [--force]")
 	fmt.Fprintln(os.Stderr, "  air session delete <id>")
-	fmt.Fprintln(os.Stderr, "  air agent openclaude start [--session ID] [--provider local|firecracker] [--repo PATH] [--guest-repo PATH] [--workspace PATH] [--host HOST] [--port 50051] [--command \"bun run scripts/start-grpc.ts\"]")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude start [--session ID] [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--repo PATH] [--guest-repo PATH] [--workspace PATH] [--host HOST] [--port 50051] [--command \"bun run scripts/start-grpc.ts\"]")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude status <session-id>")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude stop <session-id>")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude forward <session-id> [--listen 127.0.0.1:50052]")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude chat <session-id> [--listen 127.0.0.1:50052] [--cli-repo PATH]")
-	fmt.Fprintln(os.Stderr, "  air agent openclaude run [--provider local|firecracker] [--workspace PATH] [--repo PATH] [--guest-repo PATH] [--listen 127.0.0.1:50052]")
+	fmt.Fprintln(os.Stderr, "  air agent openclaude run [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--workspace PATH] [--repo PATH] [--guest-repo PATH] [--listen 127.0.0.1:50052]")
 	fmt.Fprintln(os.Stderr, "  air agent openclaude replay <session-id>")
 }
 
@@ -404,6 +474,16 @@ type sessionExportWorkspaceCLIOptions struct {
 	Force      bool
 }
 
+type sessionGCCLIOptions struct {
+	DryRun bool
+	Force  bool
+	Root   string
+}
+
+type gcCLIOptions struct {
+	All bool
+}
+
 type initFirecrackerCLIOptions struct {
 	Source string
 	Dir    string
@@ -412,20 +492,37 @@ type initFirecrackerCLIOptions struct {
 
 type chatCLIOptions struct {
 	Provider      string
+	Network       string
+	MemoryMiB     int
+	StorageMiB    int
 	Reconfigure   bool
 	WorkspacePath string
 	ListenAddress string
 }
 
-type chatProfile struct {
-	ProviderMode      string `json:"provider_mode,omitempty"`
-	OpenAIBaseURL     string `json:"openai_base_url,omitempty"`
-	OpenAIModel       string `json:"openai_model,omitempty"`
-	OpenAIAPIKey      string `json:"openai_api_key,omitempty"`
-	AnthropicBaseURL  string `json:"anthropic_base_url,omitempty"`
-	AnthropicAuthToken string `json:"anthropic_auth_token,omitempty"`
-	AnthropicModel    string `json:"anthropic_model,omitempty"`
+type chatGCCLIOptions struct {
+	DryRun bool
+	Force  bool
 }
+
+type chatProfile struct {
+	ProviderMode       string `json:"provider_mode,omitempty"`
+	OpenAIBaseURL      string `json:"openai_base_url,omitempty"`
+	OpenAIModel        string `json:"openai_model,omitempty"`
+	OpenAIAPIKey       string `json:"openai_api_key,omitempty"`
+	AnthropicBaseURL   string `json:"anthropic_base_url,omitempty"`
+	AnthropicAuthToken string `json:"anthropic_auth_token,omitempty"`
+	AnthropicModel     string `json:"anthropic_model,omitempty"`
+}
+
+type hostProcessInfo struct {
+	PID  int
+	PPID int
+	Args []string
+}
+
+var sessionListProcessCmdlines = defaultListHostProcesses
+var sessionKillPID = defaultKillHostPID
 
 func parseDoctorFlags(args []string) (doctorCLIOptions, error) {
 	var opts doctorCLIOptions
@@ -490,6 +587,7 @@ func parseInitFirecrackerFlags(args []string) (initFirecrackerCLIOptions, error)
 func parseChatFlags(args []string) (chatCLIOptions, error) {
 	opts := chatCLIOptions{
 		Provider:      "firecracker",
+		Network:       vm.DefaultNetworkMode(),
 		ListenAddress: "127.0.0.1:0",
 	}
 	for i := 0; i < len(args); i++ {
@@ -508,6 +606,49 @@ func parseChatFlags(args []string) (chatCLIOptions, error) {
 			if opts.Provider == "" {
 				return chatCLIOptions{}, errors.New("provider must not be empty")
 			}
+		case arg == "--network":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return chatCLIOptions{}, errors.New("network must not be empty")
+			}
+			opts.Network = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--network="):
+			opts.Network = strings.TrimPrefix(arg, "--network=")
+			if opts.Network == "" {
+				return chatCLIOptions{}, errors.New("network must not be empty")
+			}
+		case arg == "--memory-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return chatCLIOptions{}, errors.New("memory-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return chatCLIOptions{}, errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+			i++
+		case strings.HasPrefix(arg, "--memory-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--memory-mib="))
+			if err != nil || value <= 0 {
+				return chatCLIOptions{}, errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+		case arg == "--storage-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return chatCLIOptions{}, errors.New("storage-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return chatCLIOptions{}, errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
+			i++
+		case strings.HasPrefix(arg, "--storage-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--storage-mib="))
+			if err != nil || value <= 0 {
+				return chatCLIOptions{}, errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
 		case arg == "--workspace":
 			if i+1 >= len(args) || args[i+1] == "" {
 				return chatCLIOptions{}, errors.New("workspace must not be empty")
@@ -539,6 +680,9 @@ func parseChatFlags(args []string) (chatCLIOptions, error) {
 	default:
 		return chatCLIOptions{}, fmt.Errorf("unsupported provider: %s", opts.Provider)
 	}
+	if err := vm.ValidateNetworkMode(opts.Network); err != nil {
+		return chatCLIOptions{}, err
+	}
 	return opts, nil
 }
 
@@ -562,6 +706,224 @@ func parseSessionExportWorkspaceFlags(args []string) (sessionExportWorkspaceCLIO
 	opts.SessionID = positionals[0]
 	opts.OutputPath = positionals[1]
 	return opts, nil
+}
+
+func parseSessionGCFlags(args []string) (sessionGCCLIOptions, error) {
+	var opts sessionGCCLIOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--dry-run":
+			opts.DryRun = true
+		case arg == "--force":
+			opts.Force = true
+		case arg == "--root":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return sessionGCCLIOptions{}, errors.New("root must not be empty")
+			}
+			opts.Root = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--root="):
+			opts.Root = strings.TrimPrefix(arg, "--root=")
+			if opts.Root == "" {
+				return sessionGCCLIOptions{}, errors.New("root must not be empty")
+			}
+		default:
+			return sessionGCCLIOptions{}, fmt.Errorf("unknown session gc flag: %s", arg)
+		}
+	}
+	return opts, nil
+}
+
+func parseChatGCFlags(args []string) (chatGCCLIOptions, error) {
+	var opts chatGCCLIOptions
+	for _, arg := range args {
+		switch arg {
+		case "--dry-run":
+			opts.DryRun = true
+		case "--force":
+			opts.Force = true
+		default:
+			return chatGCCLIOptions{}, fmt.Errorf("unknown chat gc flag: %s", arg)
+		}
+	}
+	return opts, nil
+}
+
+func parseGCFlags(args []string) (gcCLIOptions, error) {
+	var opts gcCLIOptions
+	for _, arg := range args {
+		switch arg {
+		case "--all":
+			opts.All = true
+		default:
+			return gcCLIOptions{}, fmt.Errorf("unknown gc flag: %s", arg)
+		}
+	}
+	return opts, nil
+}
+
+type chatGCItem struct {
+	PID     int    `json:"pid"`
+	PPID    int    `json:"ppid"`
+	Command string `json:"command"`
+	Removed bool   `json:"removed"`
+}
+
+type chatGCResult struct {
+	Checked int          `json:"checked"`
+	Removed int          `json:"removed"`
+	Skipped int          `json:"skipped"`
+	Items   []chatGCItem `json:"items"`
+}
+
+type unifiedGCResult struct {
+	Session *session.GCResult `json:"session"`
+	Chat    *chatGCResult     `json:"chat"`
+}
+
+func gcAirChatProcesses(opts chatGCCLIOptions) (*chatGCResult, error) {
+	processes, err := sessionListProcessCmdlines()
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]chatGCItem, 0)
+	parents := make(map[int]struct{})
+	for _, proc := range processes {
+		if isAirChatFirecrackerProcess(proc.Args) {
+			parents[proc.PID] = struct{}{}
+			items = append(items, chatGCItem{
+				PID:     proc.PID,
+				PPID:    proc.PPID,
+				Command: strings.Join(proc.Args, " "),
+				Removed: opts.Force,
+			})
+		}
+	}
+	for _, proc := range processes {
+		if _, ok := parents[proc.PPID]; !ok {
+			continue
+		}
+		if isAirChatChildProcess(proc.Args) {
+			items = append(items, chatGCItem{
+				PID:     proc.PID,
+				PPID:    proc.PPID,
+				Command: strings.Join(proc.Args, " "),
+				Removed: opts.Force,
+			})
+		}
+	}
+
+	result := &chatGCResult{
+		Checked: len(items),
+		Items:   items,
+	}
+	if !opts.Force {
+		result.Skipped = len(items)
+		return result, nil
+	}
+
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if err := sessionKillPID(item.PID); err != nil {
+			return nil, err
+		}
+		result.Removed++
+	}
+	return result, nil
+}
+
+func runUnifiedGC(manager *session.Manager) (*unifiedGCResult, error) {
+	sessionResult, err := manager.GC(session.GCOptions{Force: true})
+	if err != nil {
+		return nil, err
+	}
+	chatResult, err := gcAirChatProcesses(chatGCCLIOptions{Force: true})
+	if err != nil {
+		return nil, err
+	}
+	return &unifiedGCResult{
+		Session: sessionResult,
+		Chat:    chatResult,
+	}, nil
+}
+
+func isAirChatFirecrackerProcess(args []string) bool {
+	return len(args) >= 4 &&
+		args[0] == "/tmp/air" &&
+		args[1] == "chat" &&
+		args[2] == "--provider" &&
+		args[3] == "firecracker"
+}
+
+func isAirChatChildProcess(args []string) bool {
+	return len(args) >= 3 &&
+		args[0] == "bun" &&
+		args[1] == "run" &&
+		strings.HasPrefix(args[2], "/tmp/air-openclaude-chat-") &&
+		strings.HasSuffix(args[2], ".mjs")
+}
+
+func defaultListHostProcesses() ([]hostProcessInfo, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	items := make([]hostProcessInfo, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		if err != nil || len(cmdline) == 0 {
+			continue
+		}
+		statBody, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		ppid, err := parseProcStatPPID(string(statBody))
+		if err != nil {
+			continue
+		}
+		parts := strings.Split(string(cmdline), "\x00")
+		args := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if part != "" {
+				args = append(args, part)
+			}
+		}
+		if len(args) == 0 {
+			continue
+		}
+		items = append(items, hostProcessInfo{PID: pid, PPID: ppid, Args: args})
+	}
+	return items, nil
+}
+
+func parseProcStatPPID(body string) (int, error) {
+	parts := strings.SplitN(body, ") ", 2)
+	if len(parts) != 2 {
+		return 0, errors.New("invalid /proc stat format")
+	}
+	fields := strings.Fields(parts[1])
+	if len(fields) < 2 {
+		return 0, errors.New("invalid /proc stat fields")
+	}
+	return strconv.Atoi(fields[1])
+}
+
+func defaultKillHostPID(pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return process.Kill()
 }
 
 func runInitFirecracker(opts initFirecrackerCLIOptions) error {
@@ -689,6 +1051,9 @@ func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions)
 
 	runOpts := openClaudeRunCLIOptions{
 		Provider:      provider,
+		Network:       opts.Network,
+		MemoryMiB:     opts.MemoryMiB,
+		StorageMiB:    opts.StorageMiB,
 		WorkspacePath: opts.WorkspacePath,
 		RepoPath:      repoPath,
 		GuestRepoPath: "/opt/openclaude",
@@ -750,6 +1115,12 @@ func ensureOpenClaudeGuestRootfsInteractive() error {
 		}
 	}
 
+	if resolved := vm.ResolveFirecrackerAsset("openclaude-ubuntu-rootfs.ext4"); resolved != "" {
+		_ = os.Setenv("AIR_FIRECRACKER_ROOTFS", resolved)
+		ensureOpenClaudeGuestBootArgs(resolved)
+		return nil
+	}
+
 	if resolved := vm.ResolveFirecrackerAsset("openclaude-alpine-rootfs.ext4"); resolved != "" {
 		_ = os.Setenv("AIR_FIRECRACKER_ROOTFS", resolved)
 		ensureOpenClaudeGuestBootArgs(resolved)
@@ -780,7 +1151,9 @@ func ensureOpenClaudeGuestBootArgs(rootfsPath string) {
 	if os.Getenv("AIR_FIRECRACKER_BOOT_ARGS") != "" {
 		return
 	}
-	if filepath.Base(rootfsPath) != "openclaude-alpine-rootfs.ext4" {
+	switch filepath.Base(rootfsPath) {
+	case "openclaude-ubuntu-rootfs.ext4", "openclaude-alpine-rootfs.ext4", "ubuntu-rootfs-air.ext4", "ubuntu-rootfs.ext4":
+	default:
 		return
 	}
 	_ = os.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "console=ttyS0 reboot=k panic=1 pci=off init=/sbin/init")
@@ -1000,7 +1373,9 @@ func hasCompleteOpenAIConfig() bool {
 }
 
 func hasCompleteAnthropicConfig() bool {
-	return os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" && os.Getenv("ANTHROPIC_BASE_URL") != "" && os.Getenv("ANTHROPIC_MODEL") != ""
+	return (os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" || os.Getenv("ANTHROPIC_API_KEY") != "") &&
+		os.Getenv("ANTHROPIC_BASE_URL") != "" &&
+		os.Getenv("ANTHROPIC_MODEL") != ""
 }
 
 func applyChatProfileEnv(profile *chatProfile) {
@@ -1014,6 +1389,9 @@ func applyChatProfileEnv(profile *chatProfile) {
 		}
 		if os.Getenv("ANTHROPIC_MODEL") == "" && profile.AnthropicModel != "" {
 			_ = os.Setenv("ANTHROPIC_MODEL", profile.AnthropicModel)
+		}
+		if os.Getenv("ANTHROPIC_API_KEY") == "" && profile.AnthropicAuthToken != "" {
+			_ = os.Setenv("ANTHROPIC_API_KEY", profile.AnthropicAuthToken)
 		}
 		if os.Getenv("ANTHROPIC_AUTH_TOKEN") == "" && profile.AnthropicAuthToken != "" {
 			_ = os.Setenv("ANTHROPIC_AUTH_TOKEN", profile.AnthropicAuthToken)
@@ -1062,7 +1440,7 @@ func promptChatProfile(reader *bufio.Reader, mode string) (*chatProfile, error) 
 	switch mode {
 	case "anthropic":
 		defaultBaseURL := "https://api.deepseek.com/anthropic"
-		defaultModel := "deepseek-v4-pro"
+		defaultModel := "deepseek-v4-pro[1m]"
 		fmt.Fprintf(os.Stdout, "Anthropic-compatible Base URL [%s]: ", defaultBaseURL)
 		baseURL, err := reader.ReadString('\n')
 		if err != nil {
@@ -1376,7 +1754,52 @@ func copyTailLines(path string, lines int, dst io.Writer) (int64, error) {
 
 type sessionCreateCLIOptions struct {
 	Provider      string
+	Network       string
+	MemoryMiB     int
+	StorageMiB    int
 	WorkspacePath string
+}
+
+type sessionExecCLIOptions struct {
+	SessionID string
+	Timeout   time.Duration
+	Command   string
+}
+
+func parseSessionExecFlags(args []string) (sessionExecCLIOptions, error) {
+	opts := sessionExecCLIOptions{Timeout: 30 * time.Second}
+	positionals := make([]string, 0, 2)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--timeout":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return sessionExecCLIOptions{}, errors.New("timeout must not be empty")
+			}
+			value, err := time.ParseDuration(args[i+1])
+			if err != nil || value <= 0 {
+				return sessionExecCLIOptions{}, errors.New("timeout must be a positive duration")
+			}
+			opts.Timeout = value
+			i++
+		case strings.HasPrefix(arg, "--timeout="):
+			value, err := time.ParseDuration(strings.TrimPrefix(arg, "--timeout="))
+			if err != nil || value <= 0 {
+				return sessionExecCLIOptions{}, errors.New("timeout must be a positive duration")
+			}
+			opts.Timeout = value
+		case strings.HasPrefix(arg, "-"):
+			return sessionExecCLIOptions{}, fmt.Errorf("unknown session exec flag: %s", arg)
+		default:
+			positionals = append(positionals, arg)
+		}
+	}
+	if len(positionals) != 2 {
+		return sessionExecCLIOptions{}, errors.New("usage: air session exec <session_id> [--timeout 30s] <command>")
+	}
+	opts.SessionID = positionals[0]
+	opts.Command = positionals[1]
+	return opts, nil
 }
 
 func parseSessionCreateFlags(args []string) (sessionCreateCLIOptions, error) {
@@ -1395,6 +1818,49 @@ func parseSessionCreateFlags(args []string) (sessionCreateCLIOptions, error) {
 			if opts.Provider == "" {
 				return sessionCreateCLIOptions{}, errors.New("provider must not be empty")
 			}
+		case arg == "--network":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return sessionCreateCLIOptions{}, errors.New("network must not be empty")
+			}
+			opts.Network = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--network="):
+			opts.Network = strings.TrimPrefix(arg, "--network=")
+			if opts.Network == "" {
+				return sessionCreateCLIOptions{}, errors.New("network must not be empty")
+			}
+		case arg == "--memory-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return sessionCreateCLIOptions{}, errors.New("memory-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return sessionCreateCLIOptions{}, errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+			i++
+		case strings.HasPrefix(arg, "--memory-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--memory-mib="))
+			if err != nil || value <= 0 {
+				return sessionCreateCLIOptions{}, errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+		case arg == "--storage-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return sessionCreateCLIOptions{}, errors.New("storage-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return sessionCreateCLIOptions{}, errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
+			i++
+		case strings.HasPrefix(arg, "--storage-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--storage-mib="))
+			if err != nil || value <= 0 {
+				return sessionCreateCLIOptions{}, errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
 		case arg == "--workspace":
 			if i+1 >= len(args) || args[i+1] == "" {
 				return sessionCreateCLIOptions{}, errors.New("workspace must not be empty")
@@ -1410,13 +1876,18 @@ func parseSessionCreateFlags(args []string) (sessionCreateCLIOptions, error) {
 			return sessionCreateCLIOptions{}, fmt.Errorf("unknown session create flag: %s", arg)
 		}
 	}
+	if err := vm.ValidateNetworkMode(opts.Network); err != nil {
+		return sessionCreateCLIOptions{}, err
+	}
 	return opts, nil
 }
 
 type runCLIOptions struct {
 	Provider      string
+	Network       string
 	Timeout       time.Duration
 	MemoryMiB     int
+	StorageMiB    int
 	VCPUCount     int
 	WorkspacePath string
 	Human         bool
@@ -1435,6 +1906,9 @@ type openClaudeChatCLIOptions struct {
 
 type openClaudeRunCLIOptions struct {
 	Provider      string
+	Network       string
+	MemoryMiB     int
+	StorageMiB    int
 	WorkspacePath string
 	RepoPath      string
 	GuestRepoPath string
@@ -1442,26 +1916,26 @@ type openClaudeRunCLIOptions struct {
 }
 
 type openClaudeTranscriptEvent struct {
-	Timestamp  string `json:"ts"`
-	Event      string `json:"event"`
-	SessionID  string `json:"session_id"`
-	Provider   string `json:"provider"`
-	Workdir    string `json:"workdir"`
-	Text       string `json:"text,omitempty"`
-	Target     string `json:"target,omitempty"`
-	ToolName   string `json:"tool_name,omitempty"`
-	ArgsJSON   string `json:"arguments_json,omitempty"`
-	ToolUseID  string `json:"tool_use_id,omitempty"`
-	Output     string `json:"output,omitempty"`
-	IsError    bool   `json:"is_error,omitempty"`
-	Question   string `json:"question,omitempty"`
-	PromptID   string `json:"prompt_id,omitempty"`
-	Reply      string `json:"reply,omitempty"`
-	FullText   string `json:"full_text,omitempty"`
-	PromptTok  int    `json:"prompt_tokens,omitempty"`
-	CompleteTok int   `json:"completion_tokens,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Code       string `json:"code,omitempty"`
+	Timestamp   string `json:"ts"`
+	Event       string `json:"event"`
+	SessionID   string `json:"session_id"`
+	Provider    string `json:"provider"`
+	Workdir     string `json:"workdir"`
+	Text        string `json:"text,omitempty"`
+	Target      string `json:"target,omitempty"`
+	ToolName    string `json:"tool_name,omitempty"`
+	ArgsJSON    string `json:"arguments_json,omitempty"`
+	ToolUseID   string `json:"tool_use_id,omitempty"`
+	Output      string `json:"output,omitempty"`
+	IsError     bool   `json:"is_error,omitempty"`
+	Question    string `json:"question,omitempty"`
+	PromptID    string `json:"prompt_id,omitempty"`
+	Reply       string `json:"reply,omitempty"`
+	FullText    string `json:"full_text,omitempty"`
+	PromptTok   int    `json:"prompt_tokens,omitempty"`
+	CompleteTok int    `json:"completion_tokens,omitempty"`
+	Message     string `json:"message,omitempty"`
+	Code        string `json:"code,omitempty"`
 }
 
 func parseOpenClaudeStartFlags(args []string) (session.OpenClaudeStartOptions, error) {
@@ -1491,6 +1965,49 @@ func parseOpenClaudeStartFlags(args []string) (session.OpenClaudeStartOptions, e
 			if opts.Provider == "" {
 				return session.OpenClaudeStartOptions{}, errors.New("provider must not be empty")
 			}
+		case arg == "--network":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("network must not be empty")
+			}
+			opts.Network = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--network="):
+			opts.Network = strings.TrimPrefix(arg, "--network=")
+			if opts.Network == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("network must not be empty")
+			}
+		case arg == "--memory-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("memory-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return session.OpenClaudeStartOptions{}, errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+			i++
+		case strings.HasPrefix(arg, "--memory-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--memory-mib="))
+			if err != nil || value <= 0 {
+				return session.OpenClaudeStartOptions{}, errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+		case arg == "--storage-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return session.OpenClaudeStartOptions{}, errors.New("storage-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return session.OpenClaudeStartOptions{}, errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
+			i++
+		case strings.HasPrefix(arg, "--storage-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--storage-mib="))
+			if err != nil || value <= 0 {
+				return session.OpenClaudeStartOptions{}, errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
 		case arg == "--repo":
 			if i+1 >= len(args) || args[i+1] == "" {
 				return session.OpenClaudeStartOptions{}, errors.New("repo must not be empty")
@@ -1565,6 +2082,9 @@ func parseOpenClaudeStartFlags(args []string) (session.OpenClaudeStartOptions, e
 		default:
 			return session.OpenClaudeStartOptions{}, fmt.Errorf("unknown openclaude flag: %s", arg)
 		}
+	}
+	if err := vm.ValidateNetworkMode(opts.Network); err != nil {
+		return session.OpenClaudeStartOptions{}, err
 	}
 	return opts, nil
 }
@@ -1653,6 +2173,7 @@ func parseOpenClaudeChatFlags(args []string) (openClaudeChatCLIOptions, error) {
 func parseOpenClaudeRunFlags(args []string) (openClaudeRunCLIOptions, error) {
 	opts := openClaudeRunCLIOptions{
 		Provider:      "firecracker",
+		Network:       vm.DefaultNetworkMode(),
 		ListenAddress: "127.0.0.1:0",
 		RepoPath:      os.Getenv("AIR_OPENCLAUDE_REPO"),
 		GuestRepoPath: os.Getenv("AIR_OPENCLAUDE_GUEST_REPO"),
@@ -1671,6 +2192,49 @@ func parseOpenClaudeRunFlags(args []string) (openClaudeRunCLIOptions, error) {
 			if opts.Provider == "" {
 				return openClaudeRunCLIOptions{}, errors.New("provider must not be empty")
 			}
+		case arg == "--network":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeRunCLIOptions{}, errors.New("network must not be empty")
+			}
+			opts.Network = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--network="):
+			opts.Network = strings.TrimPrefix(arg, "--network=")
+			if opts.Network == "" {
+				return openClaudeRunCLIOptions{}, errors.New("network must not be empty")
+			}
+		case arg == "--memory-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeRunCLIOptions{}, errors.New("memory-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return openClaudeRunCLIOptions{}, errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+			i++
+		case strings.HasPrefix(arg, "--memory-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--memory-mib="))
+			if err != nil || value <= 0 {
+				return openClaudeRunCLIOptions{}, errors.New("memory-mib must be a positive integer")
+			}
+			opts.MemoryMiB = value
+		case arg == "--storage-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return openClaudeRunCLIOptions{}, errors.New("storage-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return openClaudeRunCLIOptions{}, errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
+			i++
+		case strings.HasPrefix(arg, "--storage-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--storage-mib="))
+			if err != nil || value <= 0 {
+				return openClaudeRunCLIOptions{}, errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
 		case arg == "--workspace":
 			if i+1 >= len(args) || args[i+1] == "" {
 				return openClaudeRunCLIOptions{}, errors.New("workspace must not be empty")
@@ -1721,6 +2285,9 @@ func parseOpenClaudeRunFlags(args []string) (openClaudeRunCLIOptions, error) {
 	}
 	if opts.RepoPath == "" {
 		return openClaudeRunCLIOptions{}, errors.New("openclaude repo path is required; use --repo or AIR_OPENCLAUDE_REPO")
+	}
+	if err := vm.ValidateNetworkMode(opts.Network); err != nil {
+		return openClaudeRunCLIOptions{}, err
 	}
 	return opts, nil
 }
@@ -1876,6 +2443,9 @@ func runOpenClaudeOneCommand(ctx context.Context, manager *session.Manager, opts
 	startedAt := time.Now()
 	started, err := manager.StartOpenClaude(session.OpenClaudeStartOptions{
 		Provider:      opts.Provider,
+		Network:       opts.Network,
+		MemoryMiB:     opts.MemoryMiB,
+		StorageMiB:    opts.StorageMiB,
 		RepoPath:      opts.RepoPath,
 		GuestRepoPath: opts.GuestRepoPath,
 		WorkspacePath: opts.WorkspacePath,
@@ -1988,6 +2558,12 @@ const transcriptPath = process.env.AIR_OPENCLAUDE_CHAT_TRANSCRIPT || ''
 const host = process.env.GRPC_HOST || '127.0.0.1'
 const port = process.env.GRPC_PORT || '50052'
 const protoPath = path.resolve(process.cwd(), 'src/proto/openclaude.proto')
+const autoApproveTools = new Set(
+  (process.env.AIR_OPENCLAUDE_AUTO_APPROVE_TOOLS || 'Bash')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+)
 
 const packageDefinition = protoLoader.loadSync(protoPath, {
   keepCase: true,
@@ -2029,6 +2605,14 @@ function appendTranscript(eventType, payload = {}) {
   }
 }
 
+function parseApproveToolName(question) {
+  const match = /^Approve\s+(.+?)\?$/.exec((question || '').trim())
+  if (!match) {
+    return ''
+  }
+  return match[1].trim()
+}
+
 async function main() {
   const client = new openclaudeProto.AgentService(
     host + ':' + port,
@@ -2056,6 +2640,10 @@ async function main() {
       startStream()
     }
     awaitingReply = true
+    appendTranscript('client_write_request', {
+      message_length: String(message.length),
+      stream_active: !!call,
+    })
     call.write({
       request: {
         session_id: sessionId,
@@ -2068,6 +2656,7 @@ async function main() {
   const startStream = () => {
     call = client.Chat()
     textStreamed = false
+    appendTranscript('client_stream_start', { target: host + ':' + port })
 
     call.on('data', async (serverMessage) => {
       if (serverMessage.text_chunk) {
@@ -2104,7 +2693,14 @@ async function main() {
       }
       if (serverMessage.action_required) {
         const action = serverMessage.action_required
-        const reply = await askQuestion('\n' + approveLabel + '> ' + action.question + ' (y/n) ')
+        const toolName = parseApproveToolName(action.question)
+        let reply = ''
+        if (toolName && autoApproveTools.has(toolName)) {
+          reply = 'y'
+          console.log('\n' + approveLabel + '> ' + action.question + ' (auto: y)')
+        } else {
+          reply = await askQuestion('\n' + approveLabel + '> ' + action.question + ' (y/n) ')
+        }
         appendTranscript('approval_response', {
           question: action.question,
           prompt_id: action.prompt_id,
@@ -2153,12 +2749,21 @@ async function main() {
     })
 
     call.on('end', () => {
+      appendTranscript('client_stream_end', {})
       call = null
+    })
+
+    call.on('status', (status) => {
+      appendTranscript('client_stream_status', {
+        code: String(status.code),
+        details: status.details || '',
+      })
     })
 
     call.on('error', (err) => {
       call = null
       if (!awaitingReply) {
+        appendTranscript('client_stream_error_ignored', { message: err.message })
         return
       }
       awaitingReply = false
@@ -2209,6 +2814,17 @@ func parseRunFlags(args []string) (runCLIOptions, string, error) {
 			if opts.Provider == "" {
 				return runCLIOptions{}, "", errors.New("provider must not be empty")
 			}
+		case arg == "--network":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return runCLIOptions{}, "", errors.New("network must not be empty")
+			}
+			opts.Network = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--network="):
+			opts.Network = strings.TrimPrefix(arg, "--network=")
+			if opts.Network == "" {
+				return runCLIOptions{}, "", errors.New("network must not be empty")
+			}
 		case arg == "--timeout":
 			if i+1 >= len(args) || args[i+1] == "" {
 				return runCLIOptions{}, "", errors.New("timeout must not be empty")
@@ -2241,6 +2857,22 @@ func parseRunFlags(args []string) (runCLIOptions, string, error) {
 				return runCLIOptions{}, "", errors.New("memory-mib must be a positive integer")
 			}
 			opts.MemoryMiB = value
+		case arg == "--storage-mib":
+			if i+1 >= len(args) || args[i+1] == "" {
+				return runCLIOptions{}, "", errors.New("storage-mib must not be empty")
+			}
+			value, err := strconv.Atoi(args[i+1])
+			if err != nil || value <= 0 {
+				return runCLIOptions{}, "", errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
+			i++
+		case strings.HasPrefix(arg, "--storage-mib="):
+			value, err := strconv.Atoi(strings.TrimPrefix(arg, "--storage-mib="))
+			if err != nil || value <= 0 {
+				return runCLIOptions{}, "", errors.New("storage-mib must be a positive integer")
+			}
+			opts.StorageMiB = value
 		case arg == "--vcpu-count":
 			if i+1 >= len(args) || args[i+1] == "" {
 				return runCLIOptions{}, "", errors.New("vcpu-count must not be empty")
@@ -2276,10 +2908,13 @@ func parseRunFlags(args []string) (runCLIOptions, string, error) {
 
 	command := strings.TrimSpace(strings.Join(commandArgs, " "))
 	if command == "" {
-		return runCLIOptions{}, "", errors.New("usage: air run [--provider local|firecracker] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--workspace PATH] [--human] -- <command>")
+		return runCLIOptions{}, "", errors.New("usage: air run [--provider local|firecracker] [--network none|full] [--timeout 30s] [--memory-mib 256] [--vcpu-count 1] [--workspace PATH] [--human] -- <command>")
 	}
 	if opts.Timeout <= 0 {
 		return runCLIOptions{}, "", errors.New("timeout must be greater than 0")
+	}
+	if err := vm.ValidateNetworkMode(opts.Network); err != nil {
+		return runCLIOptions{}, "", err
 	}
 	return opts, command, nil
 }

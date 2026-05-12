@@ -18,6 +18,7 @@
 - `air run`
 - `air session create`
 - `air session list`
+- `air session gc`
 - `air session inspect`
 - `air session console`
 - `air session events`
@@ -41,6 +42,7 @@
 - 每 session 独立 `rootfs.ext4`
 - 可选只读 `workspace.ext4` + 可写 `workspace-upper.ext4`
 - `air session export-workspace` 导出 guest 当前 merged `/workspace`
+- `--network full` 下的 Firecracker `virtio-net + TAP + host NAT`
 
 ## 2. 快速开始
 
@@ -62,6 +64,7 @@ air session delete <session_id>
 air init firecracker
 air doctor --provider firecracker --human
 air session create --provider firecracker
+air session create --provider firecracker --network full
 air session exec <session_id> "uname -a"
 air session inspect <session_id>
 air session console <session_id> --follow
@@ -77,7 +80,9 @@ air session delete <session_id>
 air run -- echo hello
 air run --timeout 5s -- sh -c 'echo hello && exit 3'
 air run --memory-mib 512 --vcpu-count 2 -- echo hello
+air run --memory-mib 2048 --storage-mib 4096 -- echo hello
 air run --provider firecracker -- echo hello
+air run --provider firecracker --network full -- curl -I https://api.deepseek.com/anthropic
 ```
 
 默认输出为结构化 JSON，重点字段包括：
@@ -116,6 +121,8 @@ air run --human -- echo hello
 air session create
 air session create --provider local
 air session create --provider firecracker
+air session create --provider firecracker --network full
+air session create --provider firecracker --memory-mib 2048 --storage-mib 4096
 air session create --provider firecracker --workspace /absolute/path/to/repo
 ```
 
@@ -130,6 +137,7 @@ air session inspect <session_id>
 
 - `list` / `inspect` 会结合当前 runtime 实况刷新状态
 - 它们不只是读取 `runtime/sessions/store.json` 的旧值
+- `inspect.session.network` 表示 session 当前网络模式
 
 ### 4.3 执行命令
 
@@ -138,6 +146,20 @@ air session exec <session_id> "pwd"
 air session exec <session_id> "ls -la"
 air session exec <session_id> "go test ./..."
 ```
+
+说明：
+
+- `session exec` 现在默认流式打印 stdout/stderr
+- 命令在 guest 内执行过程中，输出会边产生边显示，而不是等结束后一次性回显
+- 对长时间编译、下载、安装这类任务，用户可以直接看到实时进度
+
+容量说明：
+
+- `--memory-mib` 控制 VM 内存大小，适合 `rustup`、编译、大模型工具链等高内存任务
+- `--storage-mib` 控制 session 存储容量
+- 对 Firecracker session，`--storage-mib` 会扩展每 session 的 `rootfs.ext4`
+- 如果附带 `--workspace`，也会同步放大可写的 `workspace-upper.ext4`
+- 当前默认值为 `1024`
 
 ### 4.4 查看日志
 
@@ -153,6 +175,12 @@ air session events <session_id> --follow
 
 - `console` 是串口日志查看，不是交互式 shell
 - `events` 是结构化事件流，适合看生命周期、exec、错误语义
+- 当前默认日志级别为 `debug`
+- 这意味着运行过程中会默认打印更完整的 AIR 侧状态信息
+- 可通过 `AIR_LOG_LEVEL` 调整：
+  - `debug`：默认，全开
+  - `info`：保留主要流程日志，减少底层细节
+  - `quiet`：尽量少打
 
 ### 4.5 导出工作区
 
@@ -175,6 +203,29 @@ air session export-workspace <session_id> /tmp/air-export --force
 ```bash
 air session delete <session_id>
 ```
+
+### 4.7 清理陈旧会话
+
+当 `runtime/sessions/store.json` 里残留了已经停止、目录已丢失、或历史遗留的 session 记录时，可以执行：
+
+```bash
+air session gc --dry-run
+air session gc
+air session gc --force
+air session gc --root /home/bigrain/tmp/runtime/sessions --force
+```
+
+说明：
+
+- `--dry-run` 只预览，不实际删除
+- `--force` 会连运行中的 session 也一并清理
+- `--force` 也会尝试清理当前 runtime 根目录下脱离 store 的 orphan runtime
+- 即使 session 目录已经丢失，只要残留 `firecracker` / `egress-proxy` 进程仍引用这个 runtime 根，`--force` 也会尝试识别并清理
+- `--root` 可指定其他 runtime 根目录，例如 `/home/bigrain/tmp/runtime/sessions`
+- 默认只清理非运行中的 session
+- `running` session 会被跳过，不会被误删
+- 对已经缺失 runtime 目录的陈旧记录，会直接从 store 中移除
+- 对仍有 runtime 目录、但状态已是 `stopped` 的 session，会尝试清理 runtime 产物再删除 store 记录
 
 ## 5. 运行目录与日志
 
@@ -207,9 +258,35 @@ runtime/sessions/firecracker/<session_id>/
 - `rootfs.ext4`：每 session 私有根盘
 - `workspace.ext4`：只读工作区镜像
 - `workspace-upper.ext4`：可写 overlay 上层
+- `rootfs.ext4` / `workspace-upper.ext4` 的容量可通过 `--storage-mib` 调整
 - `console.log`：guest 串口日志
 - `events.jsonl`：结构化事件日志
 - `config/*.json`：AIR 实际下发给 Firecracker 的配置快照
+- `config/network-interface-eth0.json`：`--network full` 时的网卡配置
+- `config/network-host.env`：host 侧 TAP / NAT / 地址信息
+- `config/network-guest.env`：guest 静态地址配置
+
+### 5.3 网络模式
+
+当前支持：
+
+- `none`
+  - 默认模式
+  - 不挂载通用 guest 网卡
+  - OpenClaude 仍可通过 host-side HTTP CONNECT relay 访问模型 API
+- `full`
+  - 给 Firecracker 挂载 `virtio-net`
+  - host 侧创建独立 TAP
+  - host 侧配置 `iptables MASQUERADE`
+  - guest 内配置静态 IP / 默认路由 / `resolv.conf`
+
+示例：
+
+```bash
+air chat --provider firecracker --network full
+air session create --provider firecracker --network full
+air agent openclaude run --provider firecracker --network full --workspace /path/to/repo --repo /path/to/openclaude
+```
 
 ## 6. 常见排障路径
 

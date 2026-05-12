@@ -15,9 +15,9 @@ This file is the English companion of the working TODO and should track the same
 
 - Firecracker asset preparation is now simpler
   - official Firecracker release binaries can be downloaded
-  - official demo `hello-vmlinux.bin` can be downloaded
-  - official demo `hello-rootfs.ext4` can be downloaded
-  - repo script: `scripts/fetch-firecracker-demo-assets.sh`
+  - official getting-started / CI `vmlinux.bin` can be downloaded
+  - official getting-started / CI `ubuntu-rootfs.ext4` can be downloaded
+  - repo script: `scripts/fetch-firecracker-ubuntu-assets.sh`
   - when `assets/firecracker/` exists in the repo, the `firecracker` provider can auto-discover those assets
 
 - Base operations and deployment documentation is now available
@@ -28,6 +28,7 @@ This file is the English companion of the working TODO and should track the same
 
 - Basic debugging and runtime inspection paths are now available
   - `air session list`
+  - `air session gc`
   - `air session inspect <id>`
   - `air session console <id>`
   - `air session console <id> --follow`
@@ -51,16 +52,22 @@ This file is the English companion of the working TODO and should track the same
   - real `session create -> exec -> delete` has been validated
 
 - Firecracker guest rootfs injection is now available
-  - repo script: `scripts/prepare-firecracker-rootfs.sh`
+  - repo script: `scripts/prepare-firecracker-ubuntu-rootfs.sh`
   - it injects `air-agent` into the rootfs
-  - it wires the boot path into the default runlevel
-  - it produces the auto-discoverable `assets/firecracker/hello-rootfs-air.ext4`
+  - it takes over guest `init` to launch `air-agent`
+  - it produces the auto-discoverable `assets/firecracker/ubuntu-rootfs-air.ext4`
 
 - Firecracker now uses a per-session writable root disk
   - startup copies the base rootfs into a session-private `rootfs.ext4`
   - without workspace injection, Firecracker mounts the session-private writable rootfs
   - with workspace injection, Firecracker mounts the session-private rootfs read-only
   - session deletion cleans up the session rootfs
+
+- The first Firecracker `--network full` path is now in place
+  - it uses `virtio-net + TAP + host NAT (MASQUERADE)`
+  - the guest has been validated to receive a static IP, a default route, and working internet egress
+  - current product gap: when a session is created by root, later `session exec/inspect/delete` also require root
+  - this should be refactored into a privileged network helper plus an unprivileged session control path so users do not need `sudo` for the whole workflow
 
 - Runtime observability is now part of the execution path
   - session lifecycle events are recorded
@@ -172,18 +179,86 @@ This file is the English companion of the working TODO and should track the same
   - `air_openclaude_firecracker_linux_amd64.tar.gz` is supported
   - `air_openclaude_firecracker_linux_arm64.tar.gz` is supported
   - the release workflow now builds the OpenClaude Firecracker guest bundle
+  - `scripts/prepare-openclaude-ubuntu-rootfs.sh` now also injects the minimal guest tool dependencies: `bash`, `ripgrep`, `curl`, `git`, and `ca-certificates`
 
-- OpenClaude inside AIR is now substantially wired through
-  - `air agent openclaude start/status/stop` exists
-  - `air agent openclaude forward` exists
-  - session metadata and pid/log lifecycle management are implemented
-  - provider env passthrough for OpenAI-compatible / DeepSeek-compatible guest startup is implemented
-  - Firecracker guest startup now injects writable `HOME` / `CLAUDE_CONFIG_DIR` for OpenClaude
-  - `scripts/prepare-openclaude-alpine-rootfs.sh` now builds the recommended Alpine-based OpenClaude guest image
-  - the Alpine guest image now includes Bun-compatible runtime dependencies (`libgcc`, `libstdc++`)
-  - the OpenClaude-in-Firecracker real acceptance workflow `scripts/run-openclaude-firecracker-acceptance.sh` now exists
-  - the real Firecracker acceptance path has been validated end-to-end
-  - guest `air-agent` proxy handling was hardened so a single failed proxy stream no longer tears down the entire control service
+## Product Gaps
+
+## Product Experience Priorities
+
+### P0
+
+- The command surface has too many parameters and the interaction model is still behind
+  - many common flows still require users to manually assemble `provider`, `network`, `memory`, `storage`, `workspace`, `repo`, `guest-repo`, and `timeout`
+  - this directly increases first-run friction, cognitive load, and operator error
+  - AIR needs profiles, presets, default policies, and guided flows so common cases collapse into short commands
+
+- `air chat` needs to become a unified chat + shell entrypoint
+  - the user wants one entry that supports both natural conversation and direct terminal control similar to `ssh`
+  - today `air chat` is conversation-oriented while `air session exec` is command-oriented, which creates an obvious split
+  - AIR should converge on one session model that supports agent conversation, PTY handoff, exit, and return to chat mode
+
+- Firecracker workspace still uses the image-plus-overlay model
+  - the current backend cannot simply switch to `virtio-fs`
+  - the VM feel is still too strong and the host/guest workspace split remains obvious
+  - reducing that friction requires a host/guest workspace sync mode, or a new runtime provider that supports a shared filesystem
+
+- Tool execution remains opaque inside `air chat`
+  - users can currently see `Tool Call` and the final `Tool Result` only
+  - stdout / stderr produced while a Bash tool is still running are not shown live
+  - this needs OpenClaude gRPC progress passthrough plus AIR chat-side rendering
+
+### P1
+
+- Effective config and auth sources are still opaque
+  - it is hard to tell which key, provider, or config file is actually active
+  - debugging `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` conflicts is expensive
+  - AIR needs an effective-config plus config-source view
+
+- AIR and host OpenClaude configuration models are still fragmented
+  - AIR config, OpenClaude user settings, and environment variables can still contaminate one another
+  - a single config entrypoint and stricter provider/profile validation are needed
+
+- Guest base environment checks are still incomplete
+  - missing `PATH`, `sh`, `rg`, `cargo`, `rustup`, and related tools usually fail mid-run
+  - startup or doctor output should make these checks explicit
+
+- Timeout policy is still inconsistent across execution paths
+  - `session exec` already supports `--timeout`
+  - internal `air chat` tool execution and longer OpenClaude paths still need a unified timeout model
+
+- Host / guest OpenClaude and `air-agent` versions still lack a handshake
+  - after a host upgrade, the guest rootfs may still run an older agent
+  - there is no protocol-version negotiation or explicit incompatibility error
+  - startup should detect and report this directly instead of relying on symptom debugging
+
+- Approval denial does not yet terminate the whole task cleanly
+  - entering `n` at `Approve Bash? (y/n)` only rejects that one tool call and does not cancel the current task
+  - AIR needs an explicit "deny and stop task" path
+
+- Resource cleanup UX is still not product-grade
+  - this recovery round exposed multiple object models: sessions, chat processes, orphan runtimes, orphan processes, and multi-root runtime trees
+  - users currently need to understand the differences between `session gc`, `chat gc`, `--force`, `--root`, and `gc --all`, which means the cleanup model is still implementation-shaped
+  - a mature product should self-clean by default and offer one unified resource overview plus one-shot recovery instead of forcing users to decide whether they need to kill a session, a chat process, a directory, or a process tree
+
+- Resource ownership and lifecycle remain opaque
+  - users can see many processes in `ps`, but the system does not directly explain which runtime root or session they belong to, or whether they are still store-managed
+  - the ownership and exit ordering across chat parents, Bun child processes, Firecracker VMs, and egress proxies are not surfaced clearly
+  - AIR needs one unified status view that directly labels resources as active, stale, orphaned, or root-owned
+
+### P2
+
+- Log levels still need finer separation
+  - transport byte-stream logs should not appear as part of normal `AIR_LOG_LEVEL=debug` usage
+  - major flow logs and transport-level logs need separate controls
+
+- There is still no system-level status overview
+  - provider, network, memory, storage, guest agent version, OpenClaude config source, and auth source are not shown in one place
+  - AIR needs a stronger top-level status and diagnostics surface
+
+- Full-network sessions created by root still require root for later operations
+  - `session exec/inspect/delete` still require `sudo` in the current full-network mode
+  - this is still a visible experience break
+  - this should be split into a privileged network helper plus ordinary session control
 
 ## Priority Rule
 

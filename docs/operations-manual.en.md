@@ -18,6 +18,7 @@ Current CLI entry points:
 - `air run`
 - `air session create`
 - `air session list`
+- `air session gc`
 - `air session inspect`
 - `air session console`
 - `air session events`
@@ -41,6 +42,7 @@ The Firecracker path already covers:
 - per-session `rootfs.ext4`
 - optional read-only `workspace.ext4` plus writable `workspace-upper.ext4`
 - `air session export-workspace` exporting the current merged guest `/workspace`
+- Firecracker `virtio-net + TAP + host NAT` in `--network full`
 
 ## 2. Quick Start
 
@@ -62,6 +64,7 @@ Prepare the host first, then run:
 air init firecracker
 air doctor --provider firecracker --human
 air session create --provider firecracker
+air session create --provider firecracker --network full
 air session exec <session_id> "uname -a"
 air session inspect <session_id>
 air session console <session_id> --follow
@@ -77,7 +80,9 @@ One-shot examples:
 air run -- echo hello
 air run --timeout 5s -- sh -c 'echo hello && exit 3'
 air run --memory-mib 512 --vcpu-count 2 -- echo hello
+air run --memory-mib 2048 --storage-mib 4096 -- echo hello
 air run --provider firecracker -- echo hello
+air run --provider firecracker --network full -- curl -I https://api.deepseek.com/anthropic
 ```
 
 Structured output fields to watch:
@@ -116,6 +121,8 @@ air run --human -- echo hello
 air session create
 air session create --provider local
 air session create --provider firecracker
+air session create --provider firecracker --network full
+air session create --provider firecracker --memory-mib 2048 --storage-mib 4096
 air session create --provider firecracker --workspace /absolute/path/to/repo
 ```
 
@@ -130,6 +137,7 @@ Notes:
 
 - `list` and `inspect` refresh status from the live runtime when possible
 - they do not rely only on stale JSON state
+- `inspect.session.network` shows the current session network mode
 
 ### 4.3 Exec
 
@@ -138,6 +146,20 @@ air session exec <session_id> "pwd"
 air session exec <session_id> "ls -la"
 air session exec <session_id> "go test ./..."
 ```
+
+Notes:
+
+- `session exec` now streams stdout/stderr by default
+- output is shown while the guest command is still running instead of being delayed until completion
+- this makes long-running compile, download, and install jobs directly observable
+
+Capacity notes:
+
+- `--memory-mib` controls VM memory size for higher-memory tasks such as `rustup`, builds, and larger toolchains
+- `--storage-mib` controls per-session storage capacity
+- for Firecracker sessions, `--storage-mib` expands the per-session `rootfs.ext4`
+- when `--workspace` is attached, AIR also enlarges the writable `workspace-upper.ext4`
+- the current default is `1024`
 
 ### 4.4 Logs
 
@@ -153,6 +175,12 @@ Notes:
 
 - `console` is serial-log viewing, not an interactive guest shell
 - `events` is the structured event stream for lifecycle, exec, and failure analysis
+- the default log level is `debug`
+- that means AIR prints the full execution-side status flow by default
+- you can tune it with `AIR_LOG_LEVEL`:
+  - `debug`: default, fully verbose
+  - `info`: keep major flow logs, reduce low-level noise
+  - `quiet`: minimal output
 
 ### 4.5 Export Workspace
 
@@ -174,6 +202,29 @@ Notes:
 ```bash
 air session delete <session_id>
 ```
+
+### 4.7 Clean Up Stale Sessions
+
+When `runtime/sessions/store.json` still contains stopped sessions, missing runtime directories, or older leftover records, run:
+
+```bash
+air session gc --dry-run
+air session gc
+air session gc --force
+air session gc --root /home/bigrain/tmp/runtime/sessions --force
+```
+
+Notes:
+
+- `--dry-run` previews cleanup without deleting anything
+- `--force` also removes running sessions
+- `--force` also tries to clean orphan runtimes under the current runtime root even when they are no longer present in the store
+- even if the session directory is already gone, `--force` now attempts to detect and clean leftover `firecracker` / `egress-proxy` processes that still reference that runtime root
+- `--root` lets you target a different runtime root such as `/home/bigrain/tmp/runtime/sessions`
+- the default behavior only cleans non-running sessions
+- `running` sessions are skipped so active VMs are not removed accidentally
+- stale records whose runtime directories are already gone are removed directly from the store
+- stopped sessions that still have runtime artifacts are cleaned up and then removed from the store
 
 ## 5. Runtime Directories And Logs
 
@@ -206,9 +257,35 @@ Key files:
 - `rootfs.ext4`: per-session private root disk
 - `workspace.ext4`: read-only workspace image
 - `workspace-upper.ext4`: writable overlay upper layer
+- `rootfs.ext4` and `workspace-upper.ext4` capacity can be adjusted with `--storage-mib`
 - `console.log`: guest serial log
 - `events.jsonl`: structured event log
 - `config/*.json`: configuration snapshots actually sent to Firecracker
+- `config/network-interface-eth0.json`: NIC config when `--network full` is enabled
+- `config/network-host.env`: host-side TAP, NAT, and address metadata
+- `config/network-guest.env`: guest static network metadata
+
+### 5.3 Network Modes
+
+Currently supported:
+
+- `none`
+  - default mode
+  - no general guest network device is attached
+  - OpenClaude can still reach model APIs through the host-side HTTP CONNECT relay
+- `full`
+  - attaches Firecracker `virtio-net`
+  - creates a dedicated TAP on the host
+  - configures host-side `iptables MASQUERADE`
+  - configures static IP, default route, and `resolv.conf` inside the guest
+
+Examples:
+
+```bash
+air chat --provider firecracker --network full
+air session create --provider firecracker --network full
+air agent openclaude run --provider firecracker --network full --workspace /path/to/repo --repo /path/to/openclaude
+```
 
 ## 6. Common Troubleshooting
 

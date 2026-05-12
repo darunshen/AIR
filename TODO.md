@@ -13,9 +13,9 @@
 
 - Firecracker 实验资产准备已简化
   - 支持下载官方 release 的 `firecracker`
-  - 支持下载官方 demo `hello-vmlinux.bin`
-  - 支持下载官方 demo `hello-rootfs.ext4`
-  - 仓库脚本：`scripts/fetch-firecracker-demo-assets.sh`
+  - 支持下载官方 getting-started / CI `vmlinux.bin`
+  - 支持下载官方 getting-started / CI `ubuntu-rootfs.ext4`
+  - 仓库脚本：`scripts/fetch-firecracker-ubuntu-assets.sh`
   - 当仓库根目录存在 `assets/firecracker/` 时，`firecracker` provider 可自动发现这些资产
 
 - 文档基础已补齐
@@ -26,6 +26,7 @@
 
 - 基础调试能力已接入
   - `air session list`
+  - `air session gc`
   - `air session inspect <id>`
   - `air session console <id>`
   - `air session console <id> --follow`
@@ -49,16 +50,22 @@
   - 真机已验证 `session create -> exec -> delete`
 
 - Firecracker guest rootfs 注入链路已接入
-  - 仓库脚本：`scripts/prepare-firecracker-rootfs.sh`
+  - 仓库脚本：`scripts/prepare-firecracker-ubuntu-rootfs.sh`
   - 会将 `air-agent` 打进 rootfs
-  - 会把 `local` service 接进 default runlevel
-  - 会生成可自动发现的 `assets/firecracker/hello-rootfs-air.ext4`
+  - 会接管 guest `init` 启动 `air-agent`
+  - 会生成可自动发现的 `assets/firecracker/ubuntu-rootfs-air.ext4`
 
 - Firecracker 每 session 独立可写根盘已接入
   - 启动时会从基础 rootfs 复制出 session 私有 `rootfs.ext4`
   - 无 workspace 时，Firecracker 挂载的是 session 自己的可写 `rootfs.ext4`
   - 有 workspace 时，Firecracker 挂载的是 session 自己的只读 `rootfs.ext4`
   - session 删除时会一起清理
+
+- Firecracker `--network full` 第一版已接入
+  - 已支持 `virtio-net + TAP + host NAT(MASQUERADE)`
+  - 已验证 guest 可拿到静态 IP、默认路由、并访问外网
+  - 当前产品缺口：如果 session 由 root 创建，后续 `session exec/inspect/delete` 也必须走 root
+  - 后续需要拆分 privileged network helper 与普通 session control，避免用户在完整网络模式下全程 `sudo`
 
 - 可观测性已补到运行链路
   - 已记录 session 生命周期事件
@@ -170,6 +177,86 @@
   - 已支持 `air_openclaude_firecracker_linux_amd64.tar.gz`
   - 已支持 `air_openclaude_firecracker_linux_arm64.tar.gz`
   - release workflow 已纳入 OpenClaude Firecracker guest bundle 构建
+  - `scripts/prepare-openclaude-ubuntu-rootfs.sh` 现会额外注入 guest 侧最小工具依赖：`bash`、`ripgrep`、`curl`、`git`、`ca-certificates`
+
+## Product Gaps
+
+## Product Experience Priorities
+
+### P0
+
+- 命令参数过多，交互方式落后
+  - 当前大量场景仍要求用户手工拼接 `provider`、`network`、`memory`、`storage`、`workspace`、`repo`、`guest-repo`、`timeout` 等参数
+  - 这会直接拉高首次使用成本、记忆负担和出错率
+  - 需要补 profile / preset / 默认策略 / 交互式向导，优先把常用场景收敛成短命令
+
+- `air chat` 需要升级为 chat + shell 一体化入口
+  - 用户希望在同一个入口里既能自然对话，也能像 `ssh` 一样直接操作终端
+  - 当前 `air chat` 偏对话，`air session exec` 偏命令，入口割裂明显
+  - 需要统一成单一会话模型：既支持 agent 对话，也支持 PTY 终端接管、退出、回到对话态
+
+- Firecracker workspace 仍然是镜像/overlay 模型
+  - 当前不能直接切换为 `virtio-fs`
+  - 虚拟机感过重，host / guest 工作区割裂感明显
+  - 如果要降低“虚拟机感”，需要补 host/guest 工作区同步模式，或新增支持共享文件系统的新 runtime provider
+
+- `air chat` 中的工具执行过程仍不可见
+  - 当前只能看到 `Tool Call` 和最终 `Tool Result`
+  - Bash 工具执行中的 stdout / stderr 尚未实时显示
+  - 需要补 OpenClaude gRPC 中间事件透传与 AIR chat 前端渲染
+
+### P1
+
+- 配置与鉴权来源不透明
+  - 用户很难直接确认当前实际生效的是哪个 key、哪个 provider、哪个配置文件
+  - `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` 冲突时排查成本高
+  - 需要最终生效配置与来源追踪视图
+
+- AIR 与 host OpenClaude 配置模型仍然割裂
+  - AIR 配置、OpenClaude 用户设置、环境变量之间容易互相污染
+  - 需要单一配置入口与更严格的 provider/profile 校验
+
+- guest 基础环境缺少明确预检
+  - `PATH`、`sh`、`rg`、`cargo`、`rustup` 等缺失时，当前通常在运行中途才暴露
+  - 需要在启动前或 doctor 输出中给出明确检查结果
+
+- 运行链路超时策略还未统一
+  - `session exec` 已支持 `--timeout`
+  - 但 `air chat` 内部工具执行、OpenClaude 长任务等路径仍需统一成可配置超时
+
+- host / guest OpenClaude 与 `air-agent` 版本缺少握手
+  - 宿主机升级后，guest rootfs 里的旧 agent 仍可能继续运行
+  - 当前缺少协议版本协商与明确的不兼容提示
+  - 需要在启动时直接识别并报错，而不是靠现象排查
+
+- 审批拒绝的任务终止语义不完整
+  - 当前在 `Approve Bash? (y/n)` 输入 `n`，只会拒绝这一次工具调用，不会取消整个任务
+  - 需要明确的“拒绝并终止当前任务”路径
+
+- 资源回收体验仍然不成熟
+  - 本轮资源回收暴露出 session、chat、orphan runtime、orphan process、multi-root runtime 等多套对象模型
+  - 用户需要理解 `session gc`、`chat gc`、`--force`、`--root`、`gc --all` 的差异，说明清理模型仍然偏实现导向
+  - 成熟产品应默认自清理，并提供统一的资源总览与一键回收，而不是让用户自己判断该杀 session、chat、目录还是进程
+
+- 资源归属与生命周期不透明
+  - 用户看到的是 `ps` 里还有很多进程，但系统没有直接说明这些进程分别属于哪个 runtime root、哪个 session、是否仍被 store 管理
+  - chat 父进程、bun 子进程、firecracker、egress-proxy 的退出顺序和归属关系也没有对用户暴露
+  - 需要统一的资源状态视图，直接展示 active / stale / orphan / root-owned 四类状态
+
+### P2
+
+- 日志分级仍需细化
+  - transport 字节流日志不应跟随普通 `AIR_LOG_LEVEL=debug` 默认打印
+  - 需要将主要流程日志与 transport 级日志拆分为独立开关
+
+- 缺少系统状态总览
+  - 当前缺少一处统一展示 provider、network、memory、storage、guest agent 版本、OpenClaude 配置来源、auth source 的入口
+  - 需要更强的状态与诊断总览页面/命令
+
+- root 创建的 full-network session 后续操作仍需 root
+  - 当前完整网络模式下，`session exec/inspect/delete` 还需要继续 `sudo`
+  - 这是明显的体验断层
+  - 需要拆分 privileged network helper 与普通 session control
 
 ## Priority Rule
 
@@ -289,7 +376,7 @@
   - 已支持 OpenClaude-compatible 长驻进程托管、pid/log 元数据与 session 删除清理
   - 已新增 `air agent openclaude forward`，支持 host 本地端口转发到 session 内 OpenClaude TCP endpoint
   - 已新增 `scripts/prepare-openclaude-firecracker-rootfs.sh`，可把 Bun + OpenClaude 注入 Firecracker guest rootfs
-  - 已新增 `scripts/prepare-openclaude-alpine-rootfs.sh`，用于基于新版 Alpine minirootfs 构建 Bun/OpenClaude 可运行的 Firecracker guest rootfs
+  - 已新增 `scripts/prepare-openclaude-ubuntu-rootfs.sh`，用于基于 Firecracker 官方 Ubuntu guest 构建 Bun/OpenClaude 可运行的 Firecracker guest rootfs
   - 官方 demo rootfs 仍可用于 AIR 基础链路验证，但用户态过旧，不再作为 OpenClaude guest 的推荐基线
   - 已支持 `air session create --provider firecracker --workspace ...`，host repo 会构建为只读 `workspace.ext4`，并在 guest 内通过 overlayfs 暴露为 `/workspace`
   - 已支持 session 私有 `workspace-upper.ext4` 写层，guest 修改不会污染 host 原 repo
@@ -297,6 +384,8 @@
   - 已支持 `air session export-workspace <id> <output-dir>` 导出当前 merged workspace 结果
   - 已支持 Firecracker guest 通过 host-side HTTP CONNECT relay 访问 provider API，guest 内默认注入 `HTTP_PROXY` / `HTTPS_PROXY`
   - 后续需要补真实 OpenClaude 任务验收
+  - 当前审批交互仍有产品缺口：用户在 `Approve Bash? (y/n)` 输入 `n` 时，只会拒绝这一次工具调用，不会取消整个任务
+  - 后续需要补“拒绝并停止当前任务”能力，例如 `/cancel`、`stop`，或在审批提示中区分“deny once”与“cancel run”
 
 ## P1: 调试与可观测性
 
