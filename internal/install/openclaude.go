@@ -13,7 +13,7 @@ import (
 const (
 	defaultSystemOpenClaudeInstallDir = "/usr/lib/air/openclaude"
 	defaultLocalOpenClaudeInstallDir  = "/usr/local/lib/air/openclaude"
-	defaultOpenClaudeGuestRootfsName  = "openclaude-alpine-rootfs.ext4"
+	defaultOpenClaudeGuestRootfsName  = "openclaude-ubuntu-rootfs.ext4"
 )
 
 func OfficialOpenClaudeBundleURL(version, goos, goarch string) (string, error) {

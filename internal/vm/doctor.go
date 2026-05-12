@@ -132,7 +132,7 @@ func checkKernelImage(path string) DoctorCheck {
 			Name:    "kernel_image",
 			Status:  doctorStatusFail,
 			Message: "kernel image is not configured",
-			Hint:    "set `AIR_FIRECRACKER_KERNEL` or place `hello-vmlinux.bin` under `assets/firecracker/` or `/usr/lib/air/firecracker/`",
+			Hint:    "set `AIR_FIRECRACKER_KERNEL` or place `vmlinux.bin` under `assets/firecracker/` or `/usr/lib/air/firecracker/`",
 		}
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -159,7 +159,7 @@ func checkRootfsImage(path string) DoctorCheck {
 			Name:    "rootfs_image",
 			Status:  doctorStatusFail,
 			Message: "rootfs image is not configured",
-			Hint:    "set `AIR_FIRECRACKER_ROOTFS` or place `hello-rootfs-air.ext4` or `hello-rootfs.ext4` under `assets/firecracker/` or `/usr/lib/air/firecracker/`",
+			Hint:    "set `AIR_FIRECRACKER_ROOTFS` or place `ubuntu-rootfs-air.ext4` or `ubuntu-rootfs.ext4` under `assets/firecracker/` or `/usr/lib/air/firecracker/`",
 		}
 	}
 	if _, err := os.Stat(path); err != nil {

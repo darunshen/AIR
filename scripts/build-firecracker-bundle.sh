@@ -45,12 +45,12 @@ STAGE_DIR="$(mktemp -d)"
 ASSET_DIR="${STAGE_DIR}/assets/firecracker"
 trap 'rm -rf "${STAGE_DIR}"' EXIT
 
-AIR_FIRECRACKER_ARCH="${FIRECRACKER_ARCH}" "${ROOT_DIR}/scripts/fetch-firecracker-demo-assets.sh" "${ASSET_DIR}"
-GOARCH="${ARCH}" "${ROOT_DIR}/scripts/prepare-firecracker-rootfs.sh" \
-  "${ASSET_DIR}/hello-rootfs.ext4" \
-  "${ASSET_DIR}/hello-rootfs-air.ext4"
+AIR_FIRECRACKER_ARCH="${FIRECRACKER_ARCH}" "${ROOT_DIR}/scripts/fetch-firecracker-ubuntu-assets.sh" "${ASSET_DIR}"
+GOARCH="${ARCH}" "${ROOT_DIR}/scripts/prepare-firecracker-ubuntu-rootfs.sh" \
+  "${ASSET_DIR}/ubuntu-rootfs.ext4" \
+  "${ASSET_DIR}/ubuntu-rootfs-air.ext4"
 
-rm -f "${ASSET_DIR}/hello-rootfs.ext4"
+rm -f "${ASSET_DIR}/ubuntu-rootfs.ext4"
 
 ARCHIVE_NAME="air_firecracker_linux_${ARCH}.tar.gz"
 tar -C "${ASSET_DIR}" -czf "${OUTPUT_DIR_ABS}/${ARCHIVE_NAME}" .

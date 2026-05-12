@@ -119,9 +119,9 @@ That workflow now covers:
 The current recommended asset strategy is:
 
 - Firecracker binary: official Firecracker release
-- kernel and demo rootfs baseline: official Firecracker demo assets
-- AIR guest agent injection: `scripts/prepare-firecracker-rootfs.sh`
-- OpenClaude guest image: `scripts/prepare-openclaude-alpine-rootfs.sh`
+- kernel and Ubuntu rootfs baseline: official Firecracker CI / getting-started assets
+- AIR guest agent injection: `scripts/prepare-firecracker-ubuntu-rootfs.sh`
+- OpenClaude guest image: `scripts/prepare-openclaude-ubuntu-rootfs.sh`
 - official OpenClaude guest release bundle: `air_openclaude_firecracker_linux_amd64.tar.gz` / `air_openclaude_firecracker_linux_arm64.tar.gz`
 
 If you installed AIR from `.deb`, the package contains the CLI, but not the Firecracker binary, kernel, or rootfs assets. Run:
@@ -285,9 +285,9 @@ scripts/run-openclaude-firecracker-acceptance.sh
 当前推荐资产策略是：
 
 - Firecracker 二进制：官方 release
-- kernel / demo rootfs 基线：官方 demo 资产
-- AIR guest agent 注入：`scripts/prepare-firecracker-rootfs.sh`
-- OpenClaude guest 镜像：`scripts/prepare-openclaude-alpine-rootfs.sh`
+- kernel / Ubuntu rootfs 基线：官方 Firecracker CI / getting-started 资产
+- AIR guest agent 注入：`scripts/prepare-firecracker-ubuntu-rootfs.sh`
+- OpenClaude guest 镜像：`scripts/prepare-openclaude-ubuntu-rootfs.sh`
 - 官方 OpenClaude guest 发布包：`air_openclaude_firecracker_linux_amd64.tar.gz` / `air_openclaude_firecracker_linux_arm64.tar.gz`
 
 如果你是通过 `.deb` 安装 AIR，需要注意安装包只包含 CLI，不包含 Firecracker 二进制、kernel 或 rootfs 资产。最推荐的首次入口是：

@@ -43,7 +43,7 @@ BUN_BIN="${4:-}"
 DEFAULT_PORT=10789
 DEFAULT_PROXY_LISTEN="127.0.0.1:18080"
 DEFAULT_PROXY_VSOCK_PORT=18080
-ALPINE_RUNTIME_PACKAGES="libgcc libstdc++"
+ALPINE_RUNTIME_PACKAGES="libgcc libstdc++ bash"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then

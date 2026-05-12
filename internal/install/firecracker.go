@@ -116,8 +116,8 @@ func BuildCustomInstallGuide(outputDir string) string {
 	return strings.Join([]string{
 		fmt.Sprintf("请自行准备以下文件并放到 %s：", outputDir),
 		"- firecracker",
-		"- hello-vmlinux.bin",
-		"- hello-rootfs-air.ext4 或 hello-rootfs.ext4",
+		"- vmlinux.bin",
+		"- ubuntu-rootfs-air.ext4 或 ubuntu-rootfs.ext4",
 		"放好后执行：air doctor --provider firecracker --human",
 	}, "\n")
 }

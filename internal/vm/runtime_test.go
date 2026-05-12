@@ -92,9 +92,9 @@ func TestNewUsesBundledFirecrackerAssetsWhenEnvMissing(t *testing.T) {
 	assetsDir := filepath.Join(root, "assets", "firecracker")
 	for _, path := range []string{
 		filepath.Join(assetsDir, "firecracker"),
-		filepath.Join(assetsDir, "hello-vmlinux.bin"),
-		filepath.Join(assetsDir, "hello-rootfs.ext4"),
-		filepath.Join(assetsDir, "hello-rootfs-air.ext4"),
+		filepath.Join(assetsDir, "vmlinux.bin"),
+		filepath.Join(assetsDir, "ubuntu-rootfs.ext4"),
+		filepath.Join(assetsDir, "ubuntu-rootfs-air.ext4"),
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("mkdir assets: %v", err)
@@ -131,10 +131,10 @@ func TestNewUsesBundledFirecrackerAssetsWhenEnvMissing(t *testing.T) {
 	if firecracker.binary != filepath.Join(root, "assets", "firecracker", "firecracker") {
 		t.Fatalf("unexpected bundled firecracker binary: %s", firecracker.binary)
 	}
-	if firecracker.kernelImage != filepath.Join(root, "assets", "firecracker", "hello-vmlinux.bin") {
+	if firecracker.kernelImage != filepath.Join(root, "assets", "firecracker", "vmlinux.bin") {
 		t.Fatalf("unexpected bundled kernel image: %s", firecracker.kernelImage)
 	}
-	if firecracker.rootfsImage != filepath.Join(root, "assets", "firecracker", "hello-rootfs-air.ext4") {
+	if firecracker.rootfsImage != filepath.Join(root, "assets", "firecracker", "ubuntu-rootfs-air.ext4") {
 		t.Fatalf("unexpected bundled rootfs image: %s", firecracker.rootfsImage)
 	}
 }

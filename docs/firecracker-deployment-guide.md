@@ -37,6 +37,7 @@ GitHub Actions 说明：
 - `x86_64` 或 `aarch64`
 - `/dev/kvm`
 - 当前用户对 `/dev/kvm` 有读写权限
+- 当前用户具备配置 TAP / `iptables` 的权限（仅 `--network full` 需要）
 - Firecracker 二进制
 - `vmlinux`
 - `rootfs.ext4`
@@ -88,7 +89,41 @@ sudo usermod -aG kvm "${USER}"
 sudo setfacl -m u:${USER}:rw /dev/kvm
 ```
 
-## 4. Firecracker 资产策略
+## 4. 检查完整网络依赖
+
+如果要启用完整网络安全等级，当前实现使用 Firecracker 最常见的方案：
+
+- `virtio-net`
+- host `tap`
+- host `iptables MASQUERADE`
+
+因此宿主机还需要：
+
+- `ip`
+- `iptables`
+- 能创建 TAP 设备
+- 能开启 `net.ipv4.ip_forward`
+
+快速检查：
+
+```bash
+command -v ip
+command -v iptables
+cat /proc/sys/net/ipv4/ip_forward
+ip route show default
+```
+
+当前 `full` 网络模式会在 session 启动时自动：
+
+- 创建独立 TAP 设备
+- 给 TAP 配置宿主机侧地址
+- 添加 `FORWARD` 规则
+- 添加 `POSTROUTING MASQUERADE`
+- 在 guest 内写入静态 IP / 默认路由 / `resolv.conf`
+
+session 删除时会自动清理这些规则和 TAP 设备。
+
+## 5. Firecracker 资产策略
 
 当前推荐策略非常明确：
 
@@ -99,24 +134,34 @@ sudo setfacl -m u:${USER}:rw /dev/kvm
 这对应两类脚本：
 
 ```bash
-scripts/fetch-firecracker-demo-assets.sh
-scripts/prepare-firecracker-rootfs.sh
+scripts/fetch-firecracker-ubuntu-assets.sh
+scripts/prepare-firecracker-ubuntu-rootfs.sh
 ```
 
 如果要跑 OpenClaude guest，还需要：
 
 ```bash
-scripts/prepare-openclaude-alpine-rootfs.sh
+scripts/prepare-openclaude-ubuntu-rootfs.sh
 ```
 
-## 5. 获取官方资产
+这个 OpenClaude guest 构建脚本会额外注入最小工具依赖：
+
+- `bash`
+- `ripgrep`
+- `curl`
+- `git`
+- `ca-certificates`
+
+用于保证 OpenClaude 的 Bash / Glob / Grep / 基础网络路径能直接在 Firecracker guest 内工作。
+
+## 6. 获取官方资产
 
 ### 5.1 Firecracker 二进制
 
 可直接使用官方 release，或用仓库脚本统一下载：
 
 ```bash
-scripts/fetch-firecracker-demo-assets.sh
+scripts/fetch-firecracker-ubuntu-assets.sh
 ```
 
 默认会把文件放到：
@@ -128,39 +173,40 @@ assets/firecracker/
 包括：
 
 - `firecracker`
-- `hello-vmlinux.bin`
-- `hello-rootfs.ext4`
+- `vmlinux.bin`
+- `ubuntu-rootfs.ext4`
 
-## 6. 准备 AIR 可用的 rootfs
+## 7. 准备 AIR 可用的 rootfs
 
 ### 6.1 基础 guest
 
-把 `air-agent` 注入官方 demo rootfs：
+把 `air-agent` 注入官方 Ubuntu rootfs：
 
 ```bash
-scripts/prepare-firecracker-rootfs.sh
+scripts/prepare-firecracker-ubuntu-rootfs.sh
 ```
 
 产物通常包括：
 
-- `assets/firecracker/hello-rootfs-air.ext4`
+- `assets/firecracker/ubuntu-rootfs-air.ext4`
 
 ### 6.2 OpenClaude guest
 
 如果要在 guest 内运行 OpenClaude：
 
 ```bash
-scripts/prepare-openclaude-alpine-rootfs.sh
+scripts/prepare-openclaude-ubuntu-rootfs.sh
 ```
 
 该脚本会准备一份适合 OpenClaude + Bun + `air-agent` 的 guest rootfs。
 
-## 7. AIR 资产发现方式
+## 8. AIR 资产发现方式
 
 AIR 会优先从环境变量读取：
 
 ```bash
 export AIR_VM_RUNTIME=firecracker
+export AIR_VM_NETWORK=none
 export AIR_FIRECRACKER_BIN=/absolute/path/to/firecracker
 export AIR_FIRECRACKER_KERNEL=/absolute/path/to/vmlinux
 export AIR_FIRECRACKER_ROOTFS=/absolute/path/to/rootfs.ext4
@@ -174,7 +220,7 @@ export AIR_KVM_DEVICE=/dev/kvm
 - `/usr/local/lib/air/firecracker/`
 - `~/.local/share/air/firecracker/`
 
-## 8. 基础验证
+## 9. 基础验证
 
 ### 8.1 预检
 
@@ -207,6 +253,23 @@ air session export-workspace <session_id> /tmp/air-export
 - `vsock exec` 可用
 - `/workspace` overlay 可挂载
 - merged workspace 可导出
+
+### 9.4 完整网络验证
+
+```bash
+air session create --provider firecracker --network full
+air session inspect <session_id>
+air session exec <session_id> "ip addr show eth0"
+air session exec <session_id> "ip route"
+air session exec <session_id> "curl -I https://api.deepseek.com/anthropic"
+```
+
+这里验证的是：
+
+- Firecracker `virtio-net` 已挂载
+- guest 静态 IP 已配置
+- 默认路由已指向宿主 TAP
+- host NAT 出网链路有效
 
 ## 9. 集成测试
 
@@ -263,7 +326,7 @@ go test ./internal/vm -run TestFirecrackerIntegrationLifecycle -v
 
 1. 官方 release `firecracker`
 2. 官方 demo `vmlinux` / `rootfs.ext4`
-3. `prepare-firecracker-rootfs.sh`
+3. `prepare-firecracker-ubuntu-rootfs.sh`
 4. `air doctor`
 5. `air session create/exec/delete`
 6. `--workspace` / `export-workspace`

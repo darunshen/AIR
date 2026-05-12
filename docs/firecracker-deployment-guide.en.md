@@ -37,6 +37,7 @@ At minimum you need:
 - `x86_64` or `aarch64`
 - `/dev/kvm`
 - a user with read/write access to `/dev/kvm`
+- permission to create TAP devices and manage `iptables` rules (required only for `--network full`)
 - a Firecracker binary
 - `vmlinux`
 - `rootfs.ext4`
@@ -88,7 +89,41 @@ Option 2: apply a temporary ACL
 sudo setfacl -m u:${USER}:rw /dev/kvm
 ```
 
-## 4. Firecracker Asset Strategy
+## 4. Verify Full-Network Dependencies
+
+For the full-network security level, AIR uses the standard Firecracker path:
+
+- `virtio-net`
+- host `tap`
+- host `iptables MASQUERADE`
+
+So the host also needs:
+
+- `ip`
+- `iptables`
+- permission to create TAP devices
+- permission to enable `net.ipv4.ip_forward`
+
+Quick checks:
+
+```bash
+command -v ip
+command -v iptables
+cat /proc/sys/net/ipv4/ip_forward
+ip route show default
+```
+
+In `full` mode, AIR will automatically:
+
+- create a dedicated TAP device
+- assign a host-side address to the TAP
+- add `FORWARD` rules
+- add `POSTROUTING MASQUERADE`
+- configure the guest with a static IP, default route, and `resolv.conf`
+
+When the session is deleted, AIR cleans up the rules and TAP device.
+
+## 5. Firecracker Asset Strategy
 
 The current recommended strategy is explicit:
 
@@ -99,24 +134,34 @@ The current recommended strategy is explicit:
 This maps to these scripts:
 
 ```bash
-scripts/fetch-firecracker-demo-assets.sh
-scripts/prepare-firecracker-rootfs.sh
+scripts/fetch-firecracker-ubuntu-assets.sh
+scripts/prepare-firecracker-ubuntu-rootfs.sh
 ```
 
 If you want an OpenClaude guest, also use:
 
 ```bash
-scripts/prepare-openclaude-alpine-rootfs.sh
+scripts/prepare-openclaude-ubuntu-rootfs.sh
 ```
 
-## 5. Fetch Official Assets
+This OpenClaude guest build script also injects the minimum tool dependencies:
+
+- `bash`
+- `ripgrep`
+- `curl`
+- `git`
+- `ca-certificates`
+
+This is required so the OpenClaude Bash / Glob / Grep / basic network path can work directly inside the Firecracker guest.
+
+## 6. Fetch Official Assets
 
 ### 5.1 Firecracker Binary
 
 You can use the official release directly, or use the repository script:
 
 ```bash
-scripts/fetch-firecracker-demo-assets.sh
+scripts/fetch-firecracker-ubuntu-assets.sh
 ```
 
 By default it places files under:
@@ -128,39 +173,40 @@ assets/firecracker/
 Including:
 
 - `firecracker`
-- `hello-vmlinux.bin`
-- `hello-rootfs.ext4`
+- `vmlinux.bin`
+- `ubuntu-rootfs.ext4`
 
-## 6. Prepare An AIR-Usable Rootfs
+## 7. Prepare An AIR-Usable Rootfs
 
 ### 6.1 Baseline Guest
 
-Inject `air-agent` into the official demo rootfs:
+Inject `air-agent` into the official Ubuntu rootfs:
 
 ```bash
-scripts/prepare-firecracker-rootfs.sh
+scripts/prepare-firecracker-ubuntu-rootfs.sh
 ```
 
 The output typically includes:
 
-- `assets/firecracker/hello-rootfs-air.ext4`
+- `assets/firecracker/ubuntu-rootfs-air.ext4`
 
 ### 6.2 OpenClaude Guest
 
 If you want to run OpenClaude inside the guest:
 
 ```bash
-scripts/prepare-openclaude-alpine-rootfs.sh
+scripts/prepare-openclaude-ubuntu-rootfs.sh
 ```
 
 That script prepares a guest rootfs suitable for OpenClaude, Bun, and `air-agent`.
 
-## 7. How AIR Finds Assets
+## 8. How AIR Finds Assets
 
 AIR first honors explicit environment variables:
 
 ```bash
 export AIR_VM_RUNTIME=firecracker
+export AIR_VM_NETWORK=none
 export AIR_FIRECRACKER_BIN=/absolute/path/to/firecracker
 export AIR_FIRECRACKER_KERNEL=/absolute/path/to/vmlinux
 export AIR_FIRECRACKER_ROOTFS=/absolute/path/to/rootfs.ext4
@@ -174,7 +220,7 @@ If you do not set them, AIR also looks in these directories:
 - `/usr/local/lib/air/firecracker/`
 - `~/.local/share/air/firecracker/`
 
-## 8. Baseline Validation
+## 9. Baseline Validation
 
 ### 8.1 Preflight
 
@@ -207,6 +253,23 @@ This validates that:
 - `vsock exec` works
 - `/workspace` overlay mounts correctly
 - the merged workspace can be exported
+
+### 9.4 Full Network Validation
+
+```bash
+air session create --provider firecracker --network full
+air session inspect <session_id>
+air session exec <session_id> "ip addr show eth0"
+air session exec <session_id> "ip route"
+air session exec <session_id> "curl -I https://api.deepseek.com/anthropic"
+```
+
+This validates that:
+
+- Firecracker `virtio-net` is attached
+- the guest static IP is configured
+- the default route points at the host TAP gateway
+- host NAT egress works
 
 ## 9. Integration Test
 
@@ -263,7 +326,7 @@ Move in this order:
 
 1. official release `firecracker`
 2. official demo `vmlinux` and `rootfs.ext4`
-3. `prepare-firecracker-rootfs.sh`
+3. `prepare-firecracker-ubuntu-rootfs.sh`
 4. `air doctor`
 5. `air session create/exec/delete`
 6. `--workspace` and `export-workspace`
