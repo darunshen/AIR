@@ -6,6 +6,7 @@ type Session struct {
 	ID            string    `json:"id"`
 	VMID          string    `json:"vm_id"`
 	Provider      string    `json:"provider"`
+	Network       string    `json:"network,omitempty"`
 	Status        string    `json:"status"`
 	WorkspacePath string    `json:"workspace_path,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`

@@ -85,6 +85,35 @@ func createEmptyExt4(outputPath string, size int64, inodeCount int64) error {
 	return cmd.Run()
 }
 
+func expandExt4Image(outputPath string, size int64) error {
+	if size <= 0 {
+		return nil
+	}
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		return err
+	}
+	if info.Size() >= size {
+		return nil
+	}
+	if _, err := exec.LookPath("resize2fs"); err != nil {
+		return fmt.Errorf("resize2fs is required to expand ext4 image: %w", err)
+	}
+	file, err := os.OpenFile(outputPath, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	if err := file.Truncate(size); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	cmd := exec.Command("resize2fs", outputPath)
+	return cmd.Run()
+}
+
 func createExt4FromDir(outputPath, sourceDir string, size, inodeCount int64) error {
 	if err := os.RemoveAll(outputPath); err != nil {
 		return err

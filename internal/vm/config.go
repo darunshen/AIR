@@ -6,21 +6,27 @@ import (
 )
 
 const (
-	defaultRuntimeRoot                      = "runtime/sessions"
-	defaultFirecrackerBinary                = "firecracker"
-	defaultFirecrackerAssetDir              = "assets/firecracker"
-	defaultInstalledFirecrackerDir          = "/usr/lib/air/firecracker"
-	defaultLocalFirecrackerDir              = "/usr/local/lib/air/firecracker"
-	defaultBundledKernelImage               = "hello-vmlinux.bin"
-	defaultBundledRootfsImage               = "hello-rootfs.ext4"
-	defaultBundledPatchedRootfsImage        = "hello-rootfs-air.ext4"
-	defaultBundledOpenClaudeRootfsImage     = "openclaude-alpine-rootfs.ext4"
-	defaultBundledFirecracker               = "firecracker"
-	defaultFirecrackerBootArgs              = "console=ttyS0 reboot=k panic=1 pci=off"
-	defaultKVMDevice                        = "/dev/kvm"
-	defaultFirecrackerMemoryMiB             = 256
-	defaultFirecrackerVCPUCount             = 1
-	defaultVSockCIDBase              uint32 = 100
+	defaultRuntimeRoot                         = "runtime/sessions"
+	defaultNetworkMode                         = "none"
+	defaultStorageMiB                          = 1024
+	defaultFirecrackerBinary                   = "firecracker"
+	defaultFirecrackerAssetDir                 = "assets/firecracker"
+	defaultInstalledFirecrackerDir             = "/usr/lib/air/firecracker"
+	defaultLocalFirecrackerDir                 = "/usr/local/lib/air/firecracker"
+	defaultBundledKernelImage                  = "vmlinux.bin"
+	legacyBundledKernelImage                   = "hello-vmlinux.bin"
+	defaultBundledRootfsImage                  = "ubuntu-rootfs.ext4"
+	legacyBundledRootfsImage                   = "hello-rootfs.ext4"
+	defaultBundledPatchedRootfsImage           = "ubuntu-rootfs-air.ext4"
+	legacyBundledPatchedRootfsImage            = "hello-rootfs-air.ext4"
+	defaultBundledOpenClaudeRootfsImage        = "openclaude-ubuntu-rootfs.ext4"
+	legacyBundledOpenClaudeRootfsImage         = "openclaude-alpine-rootfs.ext4"
+	defaultBundledFirecracker                  = "firecracker"
+	defaultFirecrackerBootArgs                 = "console=ttyS0 reboot=k panic=1 pci=off"
+	defaultKVMDevice                           = "/dev/kvm"
+	defaultFirecrackerMemoryMiB                = 256
+	defaultFirecrackerVCPUCount                = 1
+	defaultVSockCIDBase                 uint32 = 100
 )
 
 func ResolveConfig(root string) Config {
@@ -29,6 +35,8 @@ func ResolveConfig(root string) Config {
 	return Config{
 		Root:              root,
 		Provider:          getenvDefault("AIR_VM_RUNTIME", "local"),
+		Network:           getenvDefault("AIR_VM_NETWORK", defaultNetworkMode),
+		StorageMiB:        defaultStorageMiB,
 		FirecrackerBinary: resolveFirecrackerBinary(cwd),
 		KernelImage:       resolveFirecrackerKernel(cwd),
 		RootfsImage:       resolveFirecrackerRootfs(cwd),
@@ -54,7 +62,10 @@ func resolveFirecrackerKernel(cwd string) string {
 	if value := os.Getenv("AIR_FIRECRACKER_KERNEL"); value != "" {
 		return value
 	}
-	return bundledFirecrackerAsset(cwd, defaultBundledKernelImage)
+	if bundled := bundledFirecrackerAsset(cwd, defaultBundledKernelImage); bundled != "" {
+		return bundled
+	}
+	return bundledFirecrackerAsset(cwd, legacyBundledKernelImage)
 }
 
 func resolveFirecrackerRootfs(cwd string) string {
@@ -64,7 +75,13 @@ func resolveFirecrackerRootfs(cwd string) string {
 	if bundled := bundledFirecrackerAsset(cwd, defaultBundledPatchedRootfsImage); bundled != "" {
 		return bundled
 	}
-	return bundledFirecrackerAsset(cwd, defaultBundledRootfsImage)
+	if bundled := bundledFirecrackerAsset(cwd, legacyBundledPatchedRootfsImage); bundled != "" {
+		return bundled
+	}
+	if bundled := bundledFirecrackerAsset(cwd, defaultBundledRootfsImage); bundled != "" {
+		return bundled
+	}
+	return bundledFirecrackerAsset(cwd, legacyBundledRootfsImage)
 }
 
 func bundledFirecrackerAsset(cwd, name string) string {

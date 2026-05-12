@@ -23,6 +23,7 @@ import (
 
 type firecrackerRuntime struct {
 	root              string
+	networkMode       string
 	binary            string
 	kernelImage       string
 	rootfsImage       string
@@ -88,11 +89,15 @@ type firecrackerPaths struct {
 	workspaceConfigPath      string
 	workspaceUpperConfigPath string
 	vsockConfigPath          string
+	networkConfigPath        string
+	networkGuestConfigPath   string
+	networkInterfacePath     string
 }
 
 func newFirecrackerRuntime(cfg Config) (Runtime, error) {
 	return &firecrackerRuntime{
 		root:              filepath.Join(cfg.Root, "firecracker"),
+		networkMode:       normalizeNetworkMode(cfg.Network),
 		binary:            cfg.FirecrackerBinary,
 		kernelImage:       cfg.KernelImage,
 		rootfsImage:       cfg.RootfsImage,
@@ -115,6 +120,13 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 	if err := r.preflight(); err != nil {
 		return "", err
 	}
+	if err := validateNetworkMode(opts.Network); err != nil {
+		return "", err
+	}
+	networkMode := normalizeNetworkMode(opts.Network)
+	if networkMode == "" {
+		networkMode = r.networkMode
+	}
 
 	paths := r.paths(sessionID)
 	if err := os.MkdirAll(paths.configDir, 0o755); err != nil {
@@ -127,15 +139,26 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 	_ = os.Remove(paths.rootfsPath)
 	_ = os.Remove(paths.workspacePath)
 	_ = os.Remove(paths.workspaceUpperPath)
+	_ = os.Remove(paths.networkConfigPath)
+	_ = os.Remove(paths.networkGuestConfigPath)
 
 	if err := copyFile(paths.rootfsPath, r.rootfsImage); err != nil {
 		return "", fmt.Errorf("prepare firecracker session rootfs: %w", err)
+	}
+	if opts.StorageMiB > 0 {
+		if err := expandExt4Image(paths.rootfsPath, int64(opts.StorageMiB)*1024*1024); err != nil {
+			return "", fmt.Errorf("expand firecracker session rootfs: %w", err)
+		}
 	}
 	if opts.WorkspacePath != "" {
 		if err := buildWorkspaceImage(paths.workspacePath, opts.WorkspacePath); err != nil {
 			return "", fmt.Errorf("prepare firecracker workspace image: %w", err)
 		}
-		if err := createEmptyExt4(paths.workspaceUpperPath, defaultWorkspaceUpperSize, 65536); err != nil {
+		upperSize := int64(defaultWorkspaceUpperSize)
+		if opts.StorageMiB > 0 {
+			upperSize = int64(opts.StorageMiB) * 1024 * 1024
+		}
+		if err := createEmptyExt4(paths.workspaceUpperPath, upperSize, 65536); err != nil {
 			return "", fmt.Errorf("prepare firecracker workspace upper image: %w", err)
 		}
 	}
@@ -157,10 +180,38 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 		"rootfs_path":      paths.rootfsPath,
 		"workspace_path":   opts.WorkspacePath,
 		"kernel_path":      r.kernelImage,
+		"network":          networkMode,
 	})
 
-	payloads := r.payloads(sessionID, paths)
+	networkCfg := firecrackerNetworkConfig{Mode: networkMode}
+	if networkMode == firecrackerNetworkFull {
+		networkCfg = guestStaticNetworkConfig(sessionID)
+		networkCfg.HostInterface, err = discoverDefaultRouteInterface()
+		if err != nil {
+			return "", err
+		}
+		networkCfg.ResolvConfPath = resolveResolvConfPath()
+		if err := validateStaticNetworkConfig(networkCfg); err != nil {
+			return "", err
+		}
+		if err := setupTapNetworking(networkCfg); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(paths.networkConfigPath, serializeHostNetworkConfig(networkCfg), 0o644); err != nil {
+			teardownTapNetworking(networkCfg)
+			return "", err
+		}
+		if err := writeGuestNetworkConfig(paths.networkGuestConfigPath, networkCfg); err != nil {
+			teardownTapNetworking(networkCfg)
+			return "", err
+		}
+	}
+
+	payloads := r.payloads(sessionID, paths, networkCfg)
 	if err := r.writeConfigSnapshot(paths, payloads); err != nil {
+		if networkMode == firecrackerNetworkFull {
+			teardownTapNetworking(networkCfg)
+		}
 		return "", err
 	}
 
@@ -201,6 +252,9 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 	}
 	if err := waitForSocketFn(paths.socketPath, waitErrCh); err != nil {
 		_ = cmd.Process.Kill()
+		if networkMode == firecrackerNetworkFull {
+			teardownTapNetworking(networkCfg)
+		}
 		return "", err
 	}
 
@@ -216,40 +270,70 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 	client := newUnixClientFn(paths.socketPath)
 	if err := putJSONFn(client, "/machine-config", payloads.machineConfig); err != nil {
 		_ = cmd.Process.Kill()
+		if networkMode == firecrackerNetworkFull {
+			teardownTapNetworking(networkCfg)
+		}
 		return "", fmt.Errorf("configure firecracker machine config: %w", err)
 	}
 
 	if err := putJSONFn(client, "/boot-source", payloads.bootSource); err != nil {
 		_ = cmd.Process.Kill()
+		if networkMode == firecrackerNetworkFull {
+			teardownTapNetworking(networkCfg)
+		}
 		return "", fmt.Errorf("configure firecracker boot source: %w", err)
 	}
 
 	if err := putJSONFn(client, "/drives/rootfs", payloads.rootfsDrive); err != nil {
 		_ = cmd.Process.Kill()
+		if networkMode == firecrackerNetworkFull {
+			teardownTapNetworking(networkCfg)
+		}
 		return "", fmt.Errorf("configure firecracker rootfs drive: %w", err)
 	}
 	if payloads.workspaceDrive != nil {
 		if err := putJSONFn(client, "/drives/workspace", payloads.workspaceDrive); err != nil {
 			_ = cmd.Process.Kill()
+			if networkMode == firecrackerNetworkFull {
+				teardownTapNetworking(networkCfg)
+			}
 			return "", fmt.Errorf("configure firecracker workspace drive: %w", err)
 		}
 	}
 	if payloads.workspaceUpperDrive != nil {
 		if err := putJSONFn(client, "/drives/workspace_upper", payloads.workspaceUpperDrive); err != nil {
 			_ = cmd.Process.Kill()
+			if networkMode == firecrackerNetworkFull {
+				teardownTapNetworking(networkCfg)
+			}
 			return "", fmt.Errorf("configure firecracker workspace upper drive: %w", err)
 		}
 	}
 
 	if err := putJSONFn(client, "/vsock", payloads.vsockConfig); err != nil {
 		_ = cmd.Process.Kill()
+		if networkMode == firecrackerNetworkFull {
+			teardownTapNetworking(networkCfg)
+		}
 		return "", fmt.Errorf("configure firecracker vsock: %w", err)
+	}
+	if payloads.networkInterface != nil {
+		if err := putJSONFn(client, "/network-interfaces/eth0", payloads.networkInterface); err != nil {
+			_ = cmd.Process.Kill()
+			if networkMode == firecrackerNetworkFull {
+				teardownTapNetworking(networkCfg)
+			}
+			return "", fmt.Errorf("configure firecracker network interface: %w", err)
+		}
 	}
 
 	if err := putJSONFn(client, "/actions", firecrackerAction{
 		ActionType: "InstanceStart",
 	}); err != nil {
 		_ = cmd.Process.Kill()
+		if networkMode == firecrackerNetworkFull {
+			teardownTapNetworking(networkCfg)
+		}
 		return "", fmt.Errorf("start firecracker instance: %w", err)
 	}
 
@@ -258,17 +342,40 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 			"error": err.Error(),
 		})
 		_ = cmd.Process.Kill()
+		if networkMode == firecrackerNetworkFull {
+			teardownTapNetworking(networkCfg)
+		}
 		return "", err
 	}
 	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "guest_ready", map[string]any{
 		"vsock_path": paths.vsockPath,
 	})
 
+	if networkMode == firecrackerNetworkFull {
+		if err := r.configureGuestNetwork(sessionID, networkCfg); err != nil {
+			_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "guest_network_failed", map[string]any{
+				"error": err.Error(),
+			})
+			_ = cmd.Process.Kill()
+			teardownTapNetworking(networkCfg)
+			return "", err
+		}
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "guest_network_ready", map[string]any{
+			"mode":       networkMode,
+			"tap_name":   networkCfg.TapName,
+			"guest_ip":   networkCfg.GuestIP,
+			"gateway_ip": networkCfg.GatewayIP,
+		})
+	}
+
 	if err := r.startEgressProxy(sessionID, paths); err != nil {
 		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "egress_proxy_failed", map[string]any{
 			"error": err.Error(),
 		})
 		_ = cmd.Process.Kill()
+		if networkMode == firecrackerNetworkFull {
+			teardownTapNetworking(networkCfg)
+		}
 		return "", err
 	}
 
@@ -368,10 +475,115 @@ func (r *firecrackerRuntime) Exec(sessionID, command string, timeout time.Durati
 	}, nil
 }
 
+func (r *firecrackerRuntime) ExecStreaming(sessionID, command string, timeout time.Duration, onChunk func(ExecChunk)) (*ExecResult, error) {
+	paths := r.paths(sessionID)
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	requestID := fmt.Sprintf("%s-%d", sessionID, time.Now().UnixNano())
+	startedAt := time.Now()
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "exec_started", map[string]any{
+		"request_id": requestID,
+		"command":    command,
+		"timeout_ms": timeout.Milliseconds(),
+		"stream":     true,
+	})
+
+	readyDeadline := timeout
+	if readyDeadline > 5*time.Second {
+		readyDeadline = 5 * time.Second
+	}
+
+	dialVSockFn := r.dialVSockFn
+	if dialVSockFn == nil {
+		dialVSockFn = dialFirecrackerVSock
+	}
+	conn, err := dialVSockFn(paths.vsockPath, guestapi.DefaultVSockPort, readyDeadline)
+	if err != nil {
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "exec_failed", map[string]any{
+			"request_id": requestID,
+			"command":    command,
+			"error":      err.Error(),
+		})
+		return nil, errGuestAgentTransport(sessionID, paths.vsockPath, err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(timeout + 5*time.Second)); err != nil {
+		return nil, err
+	}
+	req := guestapi.ExecRequest{
+		Type:      guestapi.MessageTypeExec,
+		RequestID: requestID,
+		Command:   command,
+		Timeout:   durationSeconds(timeout),
+		Stream:    true,
+	}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return nil, err
+	}
+
+	type execMessage struct {
+		Type      string `json:"type"`
+		RequestID string `json:"request_id"`
+		Stream    string `json:"stream,omitempty"`
+		Data      string `json:"data,omitempty"`
+		Stdout    string `json:"stdout,omitempty"`
+		Stderr    string `json:"stderr,omitempty"`
+		ExitCode  int    `json:"exit_code,omitempty"`
+		TimedOut  bool   `json:"timed_out,omitempty"`
+		Error     string `json:"error,omitempty"`
+	}
+	decoder := json.NewDecoder(conn)
+	for {
+		var msg execMessage
+		if err := decoder.Decode(&msg); err != nil {
+			return nil, err
+		}
+		switch msg.Type {
+		case guestapi.MessageTypeChunk:
+			if onChunk != nil && msg.Data != "" {
+				onChunk(ExecChunk{Stream: msg.Stream, Data: msg.Data})
+			}
+		case guestapi.MessageTypeResult:
+			stderr := msg.Stderr
+			if msg.Error != "" {
+				if stderr != "" && !strings.HasSuffix(stderr, "\n") {
+					stderr += "\n"
+				}
+				stderr += msg.Error
+				if !strings.HasSuffix(stderr, "\n") {
+					stderr += "\n"
+				}
+			}
+			duration := time.Since(startedAt)
+			_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "exec_completed", map[string]any{
+				"request_id":  requestID,
+				"command":     command,
+				"duration_ms": duration.Milliseconds(),
+				"exit_code":   msg.ExitCode,
+				"stream":      true,
+			})
+			return &ExecResult{
+				RequestID: requestID,
+				Stdout:    msg.Stdout,
+				Stderr:    stderr,
+				ExitCode:  msg.ExitCode,
+				TimedOut:  msg.TimedOut,
+				Duration:  duration,
+			}, nil
+		default:
+			return nil, fmt.Errorf("unexpected exec stream message type: %s", msg.Type)
+		}
+	}
+}
+
 func (r *firecrackerRuntime) Stop(vmid string) error {
 	paths := r.paths(vmid)
 	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", vmid, "session_stopping", nil)
 	_ = stopProcessFromPIDFile(paths.egressProxyPIDPath)
+	if networkCfg, err := parseHostNetworkConfig(paths.networkConfigPath); err == nil && normalizeNetworkMode(networkCfg.Mode) == firecrackerNetworkFull {
+		teardownTapNetworking(networkCfg)
+	}
 
 	pidRaw, err := os.ReadFile(paths.pidPath)
 	if err != nil {
@@ -414,6 +626,7 @@ func (r *firecrackerRuntime) Inspect(sessionID string) (*InspectInfo, error) {
 	info := &InspectInfo{
 		Provider:    "firecracker",
 		SessionID:   sessionID,
+		Network:     r.networkMode,
 		RootPath:    paths.base,
 		Exists:      exists,
 		ConsolePath: paths.consolePath,
@@ -587,7 +800,12 @@ func (r *firecrackerRuntime) putJSON(client *http.Client, path string, payload a
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("firecracker api %s returned status %d", path, resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			return fmt.Errorf("firecracker api %s returned status %d", path, resp.StatusCode)
+		}
+		return fmt.Errorf("firecracker api %s returned status %d: %s", path, resp.StatusCode, message)
 	}
 	return nil
 }
@@ -694,6 +912,9 @@ func (r *firecrackerRuntime) paths(sessionID string) firecrackerPaths {
 		workspaceConfigPath:      filepath.Join(configDir, "workspace-drive.json"),
 		workspaceUpperConfigPath: filepath.Join(configDir, "workspace-upper-drive.json"),
 		vsockConfigPath:          filepath.Join(configDir, "vsock.json"),
+		networkConfigPath:        hostNetworkConfigPath(configDir),
+		networkGuestConfigPath:   guestNetworkConfigPath(configDir),
+		networkInterfacePath:     filepath.Join(configDir, "network-interface-eth0.json"),
 	}
 }
 
@@ -704,9 +925,10 @@ type firecrackerPayloads struct {
 	workspaceDrive      *firecrackerDrive
 	workspaceUpperDrive *firecrackerDrive
 	vsockConfig         firecrackerVsock
+	networkInterface    *firecrackerNetworkInterface
 }
 
-func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) firecrackerPayloads {
+func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths, networkCfg firecrackerNetworkConfig) firecrackerPayloads {
 	rootfsReadOnly := false
 	if _, err := os.Stat(paths.workspacePath); err == nil {
 		rootfsReadOnly = true
@@ -732,6 +954,13 @@ func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths) 
 			GuestCID: r.vsockCIDBase + cidOffset(sessionID),
 			UdsPath:  paths.vsockPath,
 		},
+	}
+	if networkCfg.Mode == firecrackerNetworkFull {
+		payloads.networkInterface = &firecrackerNetworkInterface{
+			IfaceID:     "eth0",
+			GuestMAC:    networkCfg.GuestMAC,
+			HostDevName: networkCfg.TapName,
+		}
 	}
 	if _, err := os.Stat(paths.workspacePath); err == nil {
 		payloads.workspaceDrive = &firecrackerDrive{
@@ -765,10 +994,32 @@ func (r *firecrackerRuntime) writeConfigSnapshot(paths firecrackerPaths, payload
 	if payloads.workspaceUpperDrive != nil {
 		items[paths.workspaceUpperConfigPath] = payloads.workspaceUpperDrive
 	}
+	if payloads.networkInterface != nil {
+		items[paths.networkInterfacePath] = payloads.networkInterface
+	}
 	for filePath, payload := range items {
 		if err := writeJSONFile(filePath, payload); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (r *firecrackerRuntime) configureGuestNetwork(sessionID string, cfg firecrackerNetworkConfig) error {
+	command := buildGuestNetworkCommand(cfg)
+	if strings.TrimSpace(command) == "" {
+		return nil
+	}
+	result, err := r.Exec(sessionID, command, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		stderr := strings.TrimSpace(result.Stderr)
+		if stderr == "" {
+			stderr = fmt.Sprintf("guest network setup exited with code %d", result.ExitCode)
+		}
+		return errors.New(stderr)
 	}
 	return nil
 }

@@ -13,6 +13,8 @@ var (
 	ErrFirecrackerRootfsNotFound = errors.New("firecracker rootfs image not found")
 	ErrKVMDeviceNotAvailable     = errors.New("kvm device is unavailable for firecracker runtime")
 	ErrGuestAgentNotReady        = errors.New("guest agent is not ready")
+	ErrUnsupportedNetworkMode    = errors.New("unsupported network mode")
+	ErrTapNetworkingUnavailable  = errors.New("firecracker tap networking is unavailable")
 )
 
 type unsupportedProviderError struct {
@@ -49,4 +51,15 @@ func errGuestAgentNotReady(sessionID, vsockPath string) error {
 
 func errGuestAgentTransport(sessionID, vsockPath string, err error) error {
 	return fmt.Errorf("%w for session %s via %s: %v", ErrGuestAgentNotReady, sessionID, vsockPath, err)
+}
+
+func errUnsupportedNetworkMode(mode string) error {
+	return fmt.Errorf("%w: %s", ErrUnsupportedNetworkMode, mode)
+}
+
+func errTapNetworkingUnavailable(message string, err error) error {
+	if err == nil {
+		return fmt.Errorf("%w: %s", ErrTapNetworkingUnavailable, message)
+	}
+	return fmt.Errorf("%w: %s (%v)", ErrTapNetworkingUnavailable, message, err)
 }

@@ -389,7 +389,7 @@ func TestFirecrackerPayloadsUseConfiguredResources(t *testing.T) {
 		t.Fatalf("expected firecracker runtime, got %T", rtAny)
 	}
 
-	payloads := rt.payloads("sess_resources", rt.paths("sess_resources"))
+	payloads := rt.payloads("sess_resources", rt.paths("sess_resources"), firecrackerNetworkConfig{Mode: defaultNetworkMode})
 	if payloads.machineConfig.MemSizeMiB != 768 {
 		t.Fatalf("unexpected memory size: %d", payloads.machineConfig.MemSizeMiB)
 	}
@@ -418,7 +418,7 @@ func TestFirecrackerPayloadsUseConfiguredBootArgs(t *testing.T) {
 		t.Fatalf("expected firecracker runtime, got %T", rtAny)
 	}
 
-	payloads := rt.payloads("sess_boot_args", rt.paths("sess_boot_args"))
+	payloads := rt.payloads("sess_boot_args", rt.paths("sess_boot_args"), firecrackerNetworkConfig{Mode: defaultNetworkMode})
 	if payloads.bootSource.BootArgs != "console=ttyS0 init=/sbin/init" {
 		t.Fatalf("unexpected boot args: %s", payloads.bootSource.BootArgs)
 	}
