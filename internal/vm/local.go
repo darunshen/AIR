@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -41,6 +42,7 @@ func (r *localRuntime) StartWithOptions(sessionID string, opts StartOptions) (st
 		}
 	}
 	_ = appendRuntimeEvent(eventsPath, "local", sessionID, "session_started", map[string]any{
+		"network":               opts.Network,
 		"workspace_path":        workspace,
 		"task_path":             taskDir,
 		"source_workspace_path": opts.WorkspacePath,
@@ -133,6 +135,140 @@ func (r *localRuntime) Exec(sessionID, command string, timeout time.Duration) (*
 	}, nil
 }
 
+func (r *localRuntime) ExecStreaming(sessionID, command string, timeout time.Duration, onChunk func(ExecChunk)) (*ExecResult, error) {
+	base := sessionRoot(r.root, sessionID)
+	workspace := filepath.Join(base, "workspace")
+	taskDir := filepath.Join(base, "task")
+	eventsPath := filepath.Join(base, "events.jsonl")
+	cmdPath := filepath.Join(taskDir, "cmd.sh")
+	requestID := fmt.Sprintf("%s-%d", sessionID, time.Now().UnixNano())
+	startedAt := time.Now()
+
+	if err := os.WriteFile(cmdPath, []byte(command+"\n"), 0o755); err != nil {
+		return nil, err
+	}
+	_ = appendRuntimeEvent(eventsPath, "local", sessionID, "exec_started", map[string]any{
+		"request_id": requestID,
+		"command":    command,
+		"timeout_ms": timeout.Milliseconds(),
+		"stream":     true,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Dir = workspace
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	type chunkMsg struct {
+		stream string
+		data   []byte
+		err    error
+		done   bool
+	}
+	readPipe := func(stream string, reader io.Reader, ch chan<- chunkMsg) {
+		defer func() { ch <- chunkMsg{stream: stream, done: true} }()
+		buf := make([]byte, 4096)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				data := append([]byte(nil), buf[:n]...)
+				ch <- chunkMsg{stream: stream, data: data}
+			}
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					ch <- chunkMsg{stream: stream, err: err}
+				}
+				return
+			}
+		}
+	}
+
+	ch := make(chan chunkMsg, 16)
+	go readPipe("stdout", stdoutPipe, ch)
+	go readPipe("stderr", stderrPipe, ch)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	doneCount := 0
+	for doneCount < 2 {
+		msg := <-ch
+		if msg.done {
+			doneCount++
+			continue
+		}
+		if msg.err != nil {
+			return nil, msg.err
+		}
+		if msg.stream == "stdout" {
+			stdout.Write(msg.data)
+		} else {
+			stderr.Write(msg.data)
+		}
+		if onChunk != nil {
+			onChunk(ExecChunk{Stream: msg.stream, Data: string(msg.data)})
+		}
+	}
+
+	runErr := cmd.Wait()
+	exitCode := 0
+	timedOut := ctx.Err() == context.DeadlineExceeded
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			if timedOut {
+				exitCode = 124
+			} else {
+				exitCode = exitErr.ExitCode()
+			}
+		} else {
+			if timedOut {
+				if stderr.Len() == 0 {
+					stderr.WriteString("command timed out\n")
+				}
+				exitCode = 124
+			} else {
+				return nil, runErr
+			}
+		}
+	}
+	if timedOut && stderr.Len() == 0 {
+		stderr.WriteString("command timed out\n")
+		if onChunk != nil {
+			onChunk(ExecChunk{Stream: "stderr", Data: "command timed out\n"})
+		}
+	}
+
+	duration := time.Since(startedAt)
+	_ = appendRuntimeEvent(eventsPath, "local", sessionID, "exec_completed", map[string]any{
+		"request_id":  requestID,
+		"command":     command,
+		"duration_ms": duration.Milliseconds(),
+		"exit_code":   exitCode,
+		"stream":      true,
+	})
+
+	return &ExecResult{
+		RequestID: requestID,
+		Stdout:    stdout.String(),
+		Stderr:    stderr.String(),
+		ExitCode:  exitCode,
+		TimedOut:  timedOut,
+		Duration:  duration,
+	}, nil
+}
+
 func (r *localRuntime) Stop(vmid string) error {
 	base := sessionRoot(r.root, vmid)
 	if _, err := os.Stat(base); err != nil {
@@ -156,6 +292,7 @@ func (r *localRuntime) Inspect(sessionID string) (*InspectInfo, error) {
 	return &InspectInfo{
 		Provider:      "local",
 		SessionID:     sessionID,
+		Network:       defaultNetworkMode,
 		RootPath:      base,
 		Exists:        exists,
 		Running:       exists,

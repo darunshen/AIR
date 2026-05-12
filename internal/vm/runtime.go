@@ -21,6 +21,8 @@ type TCPDialer interface {
 
 type StartOptions struct {
 	WorkspacePath string
+	Network       string
+	StorageMiB    int
 }
 
 type ExecResult struct {
@@ -32,9 +34,19 @@ type ExecResult struct {
 	Duration  time.Duration
 }
 
+type ExecChunk struct {
+	Stream string
+	Data   string
+}
+
+type StreamingRuntime interface {
+	ExecStreaming(sessionID, command string, timeout time.Duration, onChunk func(ExecChunk)) (*ExecResult, error)
+}
+
 type InspectInfo struct {
 	Provider           string `json:"provider"`
 	SessionID          string `json:"session_id"`
+	Network            string `json:"network,omitempty"`
 	RootPath           string `json:"root_path"`
 	Exists             bool   `json:"exists"`
 	Running            bool   `json:"running"`
@@ -57,6 +69,8 @@ type InspectInfo struct {
 type Config struct {
 	Root              string
 	Provider          string
+	Network           string
+	StorageMiB        int
 	FirecrackerBinary string
 	KernelImage       string
 	RootfsImage       string

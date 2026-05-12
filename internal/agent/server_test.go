@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,83 @@ func TestServerExecTimeout(t *testing.T) {
 	}
 	if !strings.Contains(result.Stderr, "timed out") {
 		t.Fatalf("expected timeout stderr, got %q", result.Stderr)
+	}
+}
+
+func TestServerExecStreamingWorksWithoutPATH(t *testing.T) {
+	t.Helper()
+
+	originalPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", ""); err != nil {
+		t.Fatalf("clear PATH: %v", err)
+	}
+	defer func() {
+		_ = os.Setenv("PATH", originalPath)
+	}()
+
+	server := &Server{
+		execFn:       defaultExec,
+		execStreamFn: defaultExecStream,
+	}
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	go func() {
+		_ = server.handleStream(context.Background(), serverConn)
+	}()
+
+	if err := json.NewEncoder(clientConn).Encode(guestapi.ExecRequest{
+		Type:      guestapi.MessageTypeExec,
+		RequestID: "req_stream_pathless",
+		Command:   "for i in 1 2 3; do echo tick-$i; sleep 0.01; done",
+		Timeout:   5,
+		Stream:    true,
+	}); err != nil {
+		t.Fatalf("encode exec request: %v", err)
+	}
+
+	decoder := json.NewDecoder(clientConn)
+	var chunks []guestapi.ExecChunk
+	var result guestapi.ExecResult
+	for {
+		var raw map[string]any
+		if err := decoder.Decode(&raw); err != nil {
+			t.Fatalf("decode stream response: %v", err)
+		}
+		msgType, _ := raw["type"].(string)
+		switch msgType {
+		case guestapi.MessageTypeChunk:
+			body, err := json.Marshal(raw)
+			if err != nil {
+				t.Fatalf("marshal chunk: %v", err)
+			}
+			var chunk guestapi.ExecChunk
+			if err := json.Unmarshal(body, &chunk); err != nil {
+				t.Fatalf("unmarshal chunk: %v", err)
+			}
+			chunks = append(chunks, chunk)
+		case guestapi.MessageTypeResult:
+			body, err := json.Marshal(raw)
+			if err != nil {
+				t.Fatalf("marshal result: %v", err)
+			}
+			if err := json.Unmarshal(body, &result); err != nil {
+				t.Fatalf("unmarshal result: %v", err)
+			}
+			if result.ExitCode != 0 {
+				t.Fatalf("unexpected exit code: %d stderr=%q", result.ExitCode, result.Stderr)
+			}
+			if !strings.Contains(result.Stdout, "tick-1") || !strings.Contains(result.Stdout, "tick-3") {
+				t.Fatalf("unexpected stdout: %q", result.Stdout)
+			}
+			if len(chunks) == 0 {
+				t.Fatal("expected streamed chunks")
+			}
+			return
+		default:
+			t.Fatalf("unexpected message type: %q", msgType)
+		}
 	}
 }
 

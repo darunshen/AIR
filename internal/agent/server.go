@@ -18,17 +18,21 @@ import (
 	"github.com/darunshen/AIR/internal/guestapi"
 )
 
+const defaultExecPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 type Server struct {
-	listener net.Listener
-	execFn   func(context.Context, string) (*guestapi.ExecResult, error)
-	dialFn   func(string, string) (net.Conn, error)
+	listener     net.Listener
+	execFn       func(context.Context, string) (*guestapi.ExecResult, error)
+	execStreamFn func(context.Context, string, func(guestapi.ExecChunk) error) (*guestapi.ExecResult, error)
+	dialFn       func(string, string) (net.Conn, error)
 }
 
 func NewServer(listener net.Listener) *Server {
 	return &Server{
-		listener: listener,
-		execFn:   defaultExec,
-		dialFn:   net.Dial,
+		listener:     listener,
+		execFn:       defaultExec,
+		execStreamFn: defaultExecStream,
+		dialFn:       net.Dial,
 	}
 }
 
@@ -112,6 +116,26 @@ func (s *Server) handleStream(ctx context.Context, rw io.ReadWriter) error {
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	if req.Stream {
+		execStreamFn := s.execStreamFn
+		if execStreamFn == nil {
+			execStreamFn = defaultExecStream
+		}
+		execResult, err := execStreamFn(execCtx, req.Command, func(chunk guestapi.ExecChunk) error {
+			chunk.Type = guestapi.MessageTypeChunk
+			chunk.RequestID = req.RequestID
+			return encoder.Encode(chunk)
+		})
+		if err != nil {
+			result.Error = err.Error()
+			result.ExitCode = 1
+			return encoder.Encode(result)
+		}
+		execResult.Type = guestapi.MessageTypeResult
+		execResult.RequestID = req.RequestID
+		return encoder.Encode(execResult)
+	}
+
 	execResult, err := s.execFn(execCtx, req.Command)
 	if err != nil {
 		result.Error = err.Error()
@@ -122,6 +146,124 @@ func (s *Server) handleStream(ctx context.Context, rw io.ReadWriter) error {
 	execResult.Type = guestapi.MessageTypeResult
 	execResult.RequestID = req.RequestID
 	return encoder.Encode(execResult)
+}
+
+func defaultExecStream(ctx context.Context, command string, emit func(guestapi.ExecChunk) error) (*guestapi.ExecResult, error) {
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	cmd.Env = withDefaultPATH(os.Environ())
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	type chunkMsg struct {
+		stream string
+		data   []byte
+		err    error
+		done   bool
+	}
+	readPipe := func(stream string, reader io.Reader, ch chan<- chunkMsg) {
+		defer func() { ch <- chunkMsg{stream: stream, done: true} }()
+		buf := make([]byte, 4096)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				data := append([]byte(nil), buf[:n]...)
+				ch <- chunkMsg{stream: stream, data: data}
+			}
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					ch <- chunkMsg{stream: stream, err: err}
+				}
+				return
+			}
+		}
+	}
+
+	ch := make(chan chunkMsg, 16)
+	go readPipe("stdout", stdoutPipe, ch)
+	go readPipe("stderr", stderrPipe, ch)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	doneCount := 0
+	for doneCount < 2 {
+		msg := <-ch
+		if msg.done {
+			doneCount++
+			continue
+		}
+		if msg.err != nil {
+			return nil, msg.err
+		}
+		if msg.stream == "stdout" {
+			stdout.Write(msg.data)
+		} else {
+			stderr.Write(msg.data)
+		}
+		if err := emit(guestapi.ExecChunk{Stream: msg.stream, Data: string(msg.data)}); err != nil {
+			return nil, err
+		}
+	}
+
+	runErr := cmd.Wait()
+	result := &guestapi.ExecResult{
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
+	}
+	timedOut := ctx.Err() == context.DeadlineExceeded
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			if timedOut {
+				result.ExitCode = 124
+			} else {
+				result.ExitCode = exitErr.ExitCode()
+			}
+		} else {
+			if timedOut {
+				result.ExitCode = 124
+				if result.Stderr == "" {
+					result.Stderr = "command timed out\n"
+					if err := emit(guestapi.ExecChunk{Stream: "stderr", Data: "command timed out\n"}); err != nil {
+						return nil, err
+					}
+				}
+			} else {
+				return nil, runErr
+			}
+		}
+	}
+	result.TimedOut = timedOut
+	return result, nil
+}
+
+func withDefaultPATH(env []string) []string {
+	updated := make([]string, 0, len(env)+1)
+	found := false
+	for _, item := range env {
+		if strings.HasPrefix(item, "PATH=") {
+			found = true
+			if item == "PATH=" {
+				updated = append(updated, "PATH="+defaultExecPATH)
+			} else {
+				updated = append(updated, item)
+			}
+			continue
+		}
+		updated = append(updated, item)
+	}
+	if !found {
+		updated = append(updated, "PATH="+defaultExecPATH)
+	}
+	return updated
 }
 
 func (s *Server) handleProxyStream(reader io.Reader, rw io.ReadWriter, encoder *json.Encoder, req guestapi.ExecRequest) error {
