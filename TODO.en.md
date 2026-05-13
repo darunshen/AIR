@@ -197,6 +197,13 @@ This file is the English companion of the working TODO and should track the same
   - today `air chat` is conversation-oriented while `air session exec` is command-oriented, which creates an obvious split
   - AIR should converge on one session model that supports agent conversation, PTY handoff, exit, and return to chat mode
 
+- `air chat --pty` needs native OpenClaude terminal passthrough
+  - the goal is not for AIR to recreate or manage OpenClaude spinner / Ink UI, but to attach the OpenClaude process to a guest-side PTY slave
+  - guest `air-agent` needs a PTY request path: start the OpenClaude CLI, hold the PTY master, and bridge raw bytes to host AIR over vsock
+  - host AIR needs to put the local terminal into raw mode, connect stdin/stdout to the guest PTY, and forward terminal resize events
+  - the PTY data stream must not contain JSON frames, prefixes, status wrappers, or synthetic text after the handshake; it should be transparent byte forwarding only
+  - this mode should coexist with the current gRPC `air chat` path for cases that need native TTY UI, colors, cursor control, spinner animation, and complete OpenClaude stdout/stderr
+
 - Firecracker workspace still uses the image-plus-overlay model
   - the current backend cannot simply switch to `virtio-fs`
   - the VM feel is still too strong and the host/guest workspace split remains obvious

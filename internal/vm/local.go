@@ -37,7 +37,7 @@ func (r *localRuntime) StartWithOptions(sessionID string, opts StartOptions) (st
 		}
 	}
 	if opts.WorkspacePath != "" {
-		if err := copyDir(workspace, opts.WorkspacePath, defaultWorkspaceExcludes()); err != nil {
+		if err := copyDir(workspace, opts.WorkspacePath, defaultWorkspaceExcludes(), defaultWorkspaceRelExcludes()); err != nil {
 			return "", fmt.Errorf("prepare local workspace: %w", err)
 		}
 	}

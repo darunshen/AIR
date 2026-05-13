@@ -3,6 +3,7 @@ package vm
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 const (
 	firecrackerNetworkNone = "none"
 	firecrackerNetworkFull = "full"
+	capNetAdminBit         = 12
 )
 
 type firecrackerNetworkInterface struct {
@@ -25,16 +27,17 @@ type firecrackerNetworkInterface struct {
 }
 
 type firecrackerNetworkConfig struct {
-	Mode           string `json:"mode"`
-	TapName        string `json:"tap_name,omitempty"`
-	HostIP         string `json:"host_ip,omitempty"`
-	GuestIP        string `json:"guest_ip,omitempty"`
-	GatewayIP      string `json:"gateway_ip,omitempty"`
-	SubnetCIDR     string `json:"subnet_cidr,omitempty"`
-	GuestMAC       string `json:"guest_mac,omitempty"`
-	HostInterface  string `json:"host_interface,omitempty"`
-	ResolvConfPath string `json:"resolv_conf_path,omitempty"`
-	GuestIfaceName string `json:"guest_iface_name,omitempty"`
+	Mode           string   `json:"mode"`
+	TapName        string   `json:"tap_name,omitempty"`
+	HostIP         string   `json:"host_ip,omitempty"`
+	GuestIP        string   `json:"guest_ip,omitempty"`
+	GatewayIP      string   `json:"gateway_ip,omitempty"`
+	SubnetCIDR     string   `json:"subnet_cidr,omitempty"`
+	GuestMAC       string   `json:"guest_mac,omitempty"`
+	HostInterface  string   `json:"host_interface,omitempty"`
+	ResolvConfPath string   `json:"resolv_conf_path,omitempty"`
+	Nameservers    []string `json:"nameservers,omitempty"`
+	GuestIfaceName string   `json:"guest_iface_name,omitempty"`
 }
 
 func normalizeNetworkMode(mode string) string {
@@ -171,6 +174,9 @@ func hostHasAddress(devName, addressCIDR string) bool {
 }
 
 func setupTapNetworking(cfg firecrackerNetworkConfig) error {
+	if err := checkTapNetworkingPermissions(); err != nil {
+		return err
+	}
 	if !commandExists("ip") {
 		return errTapNetworkingUnavailable("ip command not found", nil)
 	}
@@ -221,6 +227,47 @@ func setupTapNetworking(cfg firecrackerNetworkConfig) error {
 	return nil
 }
 
+func checkTapNetworkingPermissions() error {
+	if hasNetAdminCapability() {
+		return nil
+	}
+	return errTapNetworkingUnavailable("full network requires CAP_NET_ADMIN; rerun with sudo, for example: sudo -E env PATH=\"$PATH\" HOME=\"$HOME\" air chat --provider firecracker --network full", nil)
+}
+
+func hasNetAdminCapability() bool {
+	file, err := os.Open("/proc/self/status")
+	if err != nil {
+		return os.Geteuid() == 0
+	}
+	defer file.Close()
+
+	capable, ok := parseCapEffHasNetAdmin(file)
+	if ok {
+		return capable
+	}
+	return os.Geteuid() == 0
+}
+
+func parseCapEffHasNetAdmin(reader io.Reader) (bool, bool) {
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "CapEff:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return false, false
+		}
+		value, err := strconv.ParseUint(fields[1], 16, 64)
+		if err != nil {
+			return false, false
+		}
+		return value&(1<<capNetAdminBit) != 0, true
+	}
+	return false, false
+}
+
 func teardownTapNetworking(cfg firecrackerNetworkConfig) {
 	if cfg.TapName == "" {
 		return
@@ -237,12 +284,54 @@ func teardownTapNetworking(cfg firecrackerNetworkConfig) {
 }
 
 func resolveResolvConfPath() string {
-	for _, candidate := range []string{"/etc/resolv.conf", "/run/systemd/resolve/resolv.conf"} {
+	for _, candidate := range []string{"/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"} {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate
 		}
 	}
 	return ""
+}
+
+func resolveNameservers() []string {
+	for _, candidate := range []string{"/run/systemd/resolve/resolv.conf", "/etc/resolv.conf"} {
+		nameservers, err := parseNameservers(candidate)
+		if err == nil && len(nameservers) > 0 {
+			return nameservers
+		}
+	}
+	return []string{"1.1.1.1", "8.8.8.8"}
+}
+
+func parseNameservers(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var nameservers []string
+	seen := map[string]bool{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 || fields[0] != "nameserver" {
+			continue
+		}
+		ip := net.ParseIP(fields[1])
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		value := ip.String()
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		nameservers = append(nameservers, value)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return nameservers, nil
 }
 
 func parseNetworkConfigFile(path string) (firecrackerNetworkConfig, error) {
@@ -279,6 +368,10 @@ func parseNetworkConfigFile(path string) (firecrackerNetworkConfig, error) {
 			cfg.HostInterface = value
 		case "AIR_NETWORK_RESOLV_CONF":
 			cfg.ResolvConfPath = value
+		case "AIR_NETWORK_NAMESERVERS":
+			if value != "" {
+				cfg.Nameservers = strings.Split(value, ",")
+			}
 		case "AIR_NETWORK_GUEST_IFACE":
 			cfg.GuestIfaceName = value
 		}
@@ -297,6 +390,7 @@ func serializeHostNetworkConfig(cfg firecrackerNetworkConfig) []byte {
 		"AIR_NETWORK_GUEST_MAC=" + cfg.GuestMAC,
 		"AIR_NETWORK_HOST_INTERFACE=" + cfg.HostInterface,
 		"AIR_NETWORK_RESOLV_CONF=" + cfg.ResolvConfPath,
+		"AIR_NETWORK_NAMESERVERS=" + strings.Join(cfg.Nameservers, ","),
 		"AIR_NETWORK_GUEST_IFACE=" + cfg.GuestIfaceName,
 	}
 	return []byte(strings.Join(lines, "\n") + "\n")
@@ -319,17 +413,28 @@ func buildGuestNetworkCommand(cfg firecrackerNetworkConfig) string {
 		return ""
 	}
 	resolvStep := ""
-	if cfg.ResolvConfPath != "" {
-		resolvStep = "if [ -f '" + shellEscape(cfg.ResolvConfPath) + "' ]; then cp '" + shellEscape(cfg.ResolvConfPath) + "' /etc/resolv.conf 2>/dev/null || true; fi && "
+	if len(cfg.Nameservers) > 0 {
+		lines := make([]string, 0, len(cfg.Nameservers))
+		for _, nameserver := range cfg.Nameservers {
+			if net.ParseIP(nameserver) == nil {
+				continue
+			}
+			lines = append(lines, "nameserver "+nameserver)
+		}
+		if len(lines) > 0 {
+			resolvBody := strings.Join(lines, "\\n") + "\\n"
+			resolvStep = "{ printf '" + shellEscape(resolvBody) + "' > /etc/resolv.conf || { mount -o remount,rw / && rm -f /etc/resolv.conf && printf '" + shellEscape(resolvBody) + "' > /etc/resolv.conf; }; } || { echo 'failed to write /etc/resolv.conf for full network DNS' >&2; exit 1; }; "
+		}
 	}
 	return fmt.Sprintf(
-		"mkdir -p /run/air && printf '%%s\\n' 'AIR_NETWORK_MODE=%s' 'AIR_NETWORK_GUEST_IFACE=%s' 'AIR_NETWORK_GUEST_IP=%s' 'AIR_NETWORK_GATEWAY_IP=%s' 'AIR_NETWORK_SUBNET_CIDR=%s' > /run/air/network.env && "+
+		"mkdir -p /run/air && printf '%%s\\n' 'AIR_NETWORK_MODE=%s' 'AIR_NETWORK_GUEST_IFACE=%s' 'AIR_NETWORK_GUEST_IP=%s' 'AIR_NETWORK_GATEWAY_IP=%s' 'AIR_NETWORK_SUBNET_CIDR=%s' 'AIR_NETWORK_NAMESERVERS=%s' > /run/air/network.env && "+
 			"%sip link set dev %s up && ip addr add %s/24 dev %s && ip route replace default via %s dev %s",
 		cfg.Mode,
 		cfg.GuestIfaceName,
 		cfg.GuestIP,
 		cfg.GatewayIP,
 		cfg.SubnetCIDR,
+		strings.Join(cfg.Nameservers, ","),
 		resolvStep,
 		cfg.GuestIfaceName,
 		cfg.GuestIP,

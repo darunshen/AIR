@@ -371,6 +371,119 @@ func TestFirecrackerPreflightRequiresAssets(t *testing.T) {
 	}
 }
 
+func TestParseNameserversSkipsLocalResolvers(t *testing.T) {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "resolv.conf")
+	body := strings.Join([]string{
+		"nameserver 127.0.0.53",
+		"nameserver ::1",
+		"nameserver 10.0.0.53",
+		"nameserver 1.1.1.1",
+		"nameserver 10.0.0.53",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write resolv.conf: %v", err)
+	}
+
+	nameservers, err := parseNameservers(path)
+	if err != nil {
+		t.Fatalf("parse nameservers: %v", err)
+	}
+	want := []string{"10.0.0.53", "1.1.1.1"}
+	if strings.Join(nameservers, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected %v, got %v", want, nameservers)
+	}
+}
+
+func TestParseCapEffHasNetAdmin(t *testing.T) {
+	t.Helper()
+
+	tests := []struct {
+		name   string
+		status string
+		want   bool
+		wantOK bool
+	}{
+		{
+			name:   "has cap net admin",
+			status: "Name:\ttest\nCapEff:\t0000000000001000\n",
+			want:   true,
+			wantOK: true,
+		},
+		{
+			name:   "missing cap net admin",
+			status: "Name:\ttest\nCapEff:\t0000000000000000\n",
+			want:   false,
+			wantOK: true,
+		},
+		{
+			name:   "missing field",
+			status: "Name:\ttest\n",
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseCapEffHasNetAdmin(strings.NewReader(tt.status))
+			if got != tt.want || ok != tt.wantOK {
+				t.Fatalf("expected (%t,%t), got (%t,%t)", tt.want, tt.wantOK, got, ok)
+			}
+		})
+	}
+}
+
+func TestBuildGuestNetworkCommandWritesNameservers(t *testing.T) {
+	t.Helper()
+
+	cfg := guestStaticNetworkConfig("sess_dns")
+	cfg.Nameservers = []string{"1.1.1.1", "8.8.8.8"}
+
+	command := buildGuestNetworkCommand(cfg)
+	for _, marker := range []string{
+		"mount -o remount,rw /",
+		"nameserver 1.1.1.1",
+		"nameserver 8.8.8.8",
+		"failed to write /etc/resolv.conf for full network DNS",
+		"AIR_NETWORK_NAMESERVERS=1.1.1.1,8.8.8.8",
+	} {
+		if !strings.Contains(command, marker) {
+			t.Fatalf("expected command to contain %q, got %s", marker, command)
+		}
+	}
+}
+
+func TestFirecrackerPayloadsKeepRootfsWritableWithWorkspace(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	paths := firecrackerPaths{
+		rootfsPath:         filepath.Join(root, "rootfs.ext4"),
+		workspacePath:      filepath.Join(root, "workspace.ext4"),
+		workspaceUpperPath: filepath.Join(root, "workspace-upper.ext4"),
+		vsockPath:          filepath.Join(root, "root.vsock"),
+	}
+	for _, path := range []string{paths.workspacePath, paths.workspaceUpperPath} {
+		if err := os.WriteFile(path, []byte("test"), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", path, err)
+		}
+	}
+	rt := &firecrackerRuntime{vcpuCount: 1, memoryMiB: 256, vsockCIDBase: 100}
+
+	payloads := rt.payloads("sess_workspace", paths, firecrackerNetworkConfig{Mode: defaultNetworkMode})
+	if payloads.rootfsDrive.IsReadOnly {
+		t.Fatal("expected session rootfs to stay writable when workspace overlay is attached")
+	}
+	if payloads.workspaceDrive == nil || !payloads.workspaceDrive.IsReadOnly {
+		t.Fatalf("expected workspace lower drive to be read-only, got %+v", payloads.workspaceDrive)
+	}
+	if payloads.workspaceUpperDrive == nil || payloads.workspaceUpperDrive.IsReadOnly {
+		t.Fatalf("expected workspace upper drive to be writable, got %+v", payloads.workspaceUpperDrive)
+	}
+}
+
 func TestFirecrackerPayloadsUseConfiguredResources(t *testing.T) {
 	t.Helper()
 

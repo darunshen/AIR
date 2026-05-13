@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -113,8 +115,11 @@ func (s *Store) read() (*fileData, error) {
 		return &data, nil
 	}
 
-	if err := json.Unmarshal(raw, &data); err != nil {
-		return nil, err
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&data); err != nil {
+		if !errors.Is(err, io.EOF) {
+			return nil, err
+		}
 	}
 	if data.Sessions == nil {
 		data.Sessions = []*model.Session{}

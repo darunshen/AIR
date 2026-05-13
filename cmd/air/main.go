@@ -2559,7 +2559,7 @@ const host = process.env.GRPC_HOST || '127.0.0.1'
 const port = process.env.GRPC_PORT || '50052'
 const protoPath = path.resolve(process.cwd(), 'src/proto/openclaude.proto')
 const autoApproveTools = new Set(
-  (process.env.AIR_OPENCLAUDE_AUTO_APPROVE_TOOLS || 'Bash')
+  (process.env.AIR_OPENCLAUDE_AUTO_APPROVE_TOOLS || '*')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean)
@@ -2611,6 +2611,14 @@ function parseApproveToolName(question) {
     return ''
   }
   return match[1].trim()
+}
+
+function shouldAutoApprove(question) {
+  if (autoApproveTools.has('*') || autoApproveTools.has('all')) {
+    return true
+  }
+  const toolName = parseApproveToolName(question)
+  return !!toolName && autoApproveTools.has(toolName)
 }
 
 async function main() {
@@ -2693,9 +2701,8 @@ async function main() {
       }
       if (serverMessage.action_required) {
         const action = serverMessage.action_required
-        const toolName = parseApproveToolName(action.question)
         let reply = ''
-        if (toolName && autoApproveTools.has(toolName)) {
+        if (shouldAutoApprove(action.question)) {
           reply = 'y'
           console.log('\n' + approveLabel + '> ' + action.question + ' (auto: y)')
         } else {

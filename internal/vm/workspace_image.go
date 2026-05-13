@@ -24,6 +24,14 @@ func defaultWorkspaceExcludes() map[string]struct{} {
 	}
 }
 
+func defaultWorkspaceRelExcludes() map[string]struct{} {
+	return map[string]struct{}{
+		"runtime/sessions":   {},
+		"runtime/openclaude": {},
+		"artifacts":          {},
+	}
+}
+
 func buildWorkspaceImage(outputPath, sourcePath string) error {
 	sourceInfo, err := os.Stat(sourcePath)
 	if err != nil {
@@ -43,7 +51,7 @@ func buildWorkspaceImage(outputPath, sourcePath string) error {
 	defer os.RemoveAll(tmpDir)
 
 	stageRoot := filepath.Join(tmpDir, "workspace")
-	if err := copyDir(stageRoot, sourcePath, defaultWorkspaceExcludes()); err != nil {
+	if err := copyDir(stageRoot, sourcePath, defaultWorkspaceExcludes(), defaultWorkspaceRelExcludes()); err != nil {
 		return err
 	}
 
@@ -133,7 +141,7 @@ func createExt4FromDir(outputPath, sourceDir string, size, inodeCount int64) err
 	return cmd.Run()
 }
 
-func copyDir(dst, src string, excludes map[string]struct{}) error {
+func copyDir(dst, src string, excludes, relExcludes map[string]struct{}) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
@@ -154,6 +162,13 @@ func copyDir(dst, src string, excludes map[string]struct{}) error {
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if _, ok := relExcludes[rel]; ok {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		target := filepath.Join(dst, rel)
 		info, err := entry.Info()

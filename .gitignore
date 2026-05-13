@@ -8,3 +8,4 @@ assets/firecracker/
 dist/
 tmp/
 data/sessions.json
+node_modules/

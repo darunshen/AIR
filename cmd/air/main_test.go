@@ -783,11 +783,14 @@ func TestApplyChatProfileEnvAnthropic(t *testing.T) {
 	}
 }
 
-func TestOpenClaudeChatScriptDefaultsToAutoApproveBash(t *testing.T) {
+func TestOpenClaudeChatScriptDefaultsToAutoApproveAll(t *testing.T) {
 	t.Helper()
 
-	if !strings.Contains(openClaudeChatScript, "AIR_OPENCLAUDE_AUTO_APPROVE_TOOLS || 'Bash'") {
-		t.Fatalf("expected chat script to default auto-approve Bash")
+	if !strings.Contains(openClaudeChatScript, "AIR_OPENCLAUDE_AUTO_APPROVE_TOOLS || '*'") {
+		t.Fatalf("expected chat script to default auto-approve all tools")
+	}
+	if !strings.Contains(openClaudeChatScript, "autoApproveTools.has('*')") {
+		t.Fatalf("expected chat script to support wildcard auto-approval")
 	}
 	if !strings.Contains(openClaudeChatScript, "auto: y") {
 		t.Fatalf("expected chat script to print auto-approve marker")

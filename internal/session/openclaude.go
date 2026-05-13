@@ -101,7 +101,7 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 			WorkspacePath: opts.WorkspacePath,
 		})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("create session for openclaude: %w", err)
 		}
 		sessionID = s.ID
 		createdSession = true
@@ -109,7 +109,7 @@ func (m *Manager) StartOpenClaude(opts OpenClaudeStartOptions) (*OpenClaudeStatu
 
 	inspect, err := m.Inspect(sessionID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("inspect openclaude session %s: %w", sessionID, err)
 	}
 	if inspect.Session.Status != "running" {
 		return nil, errors.New("session is not running")
@@ -580,11 +580,6 @@ func buildOpenClaudeDiagnosticConfig(env map[string]string, meta *openClaudeMeta
 		"OPENAI_MODEL",
 		"ANTHROPIC_BASE_URL",
 		"ANTHROPIC_MODEL",
-		"PATH",
-		"HTTP_PROXY",
-		"HTTPS_PROXY",
-		"ALL_PROXY",
-		"NO_PROXY",
 	} {
 		if value := strings.TrimSpace(env[key]); value != "" {
 			selected[key] = value
@@ -683,6 +678,7 @@ func collectOpenClaudeProviderEnv(environ []string) map[string]string {
 		"HTTPS_PROXY":            {},
 		"ALL_PROXY":              {},
 		"NO_PROXY":               {},
+		"PATH":                   {},
 	}
 	out := make(map[string]string)
 	for _, item := range environ {

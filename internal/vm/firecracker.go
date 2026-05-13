@@ -127,6 +127,11 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 	if networkMode == "" {
 		networkMode = r.networkMode
 	}
+	if networkMode == firecrackerNetworkFull {
+		if err := checkTapNetworkingPermissions(); err != nil {
+			return "", err
+		}
+	}
 
 	paths := r.paths(sessionID)
 	if err := os.MkdirAll(paths.configDir, 0o755); err != nil {
@@ -191,6 +196,7 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 			return "", err
 		}
 		networkCfg.ResolvConfPath = resolveResolvConfPath()
+		networkCfg.Nameservers = resolveNameservers()
 		if err := validateStaticNetworkConfig(networkCfg); err != nil {
 			return "", err
 		}
@@ -929,10 +935,6 @@ type firecrackerPayloads struct {
 }
 
 func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths, networkCfg firecrackerNetworkConfig) firecrackerPayloads {
-	rootfsReadOnly := false
-	if _, err := os.Stat(paths.workspacePath); err == nil {
-		rootfsReadOnly = true
-	}
 	payloads := firecrackerPayloads{
 		machineConfig: firecrackerMachineConfig{
 			VCPUCount:  r.vcpuCount,
@@ -947,7 +949,7 @@ func (r *firecrackerRuntime) payloads(sessionID string, paths firecrackerPaths, 
 			DriveID:      "rootfs",
 			PathOnHost:   paths.rootfsPath,
 			IsRootDevice: true,
-			IsReadOnly:   rootfsReadOnly,
+			IsReadOnly:   false,
 		},
 		vsockConfig: firecrackerVsock{
 			VsockID:  "root",

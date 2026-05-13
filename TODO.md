@@ -195,6 +195,13 @@
   - 当前 `air chat` 偏对话，`air session exec` 偏命令，入口割裂明显
   - 需要统一成单一会话模型：既支持 agent 对话，也支持 PTY 终端接管、退出、回到对话态
 
+- `air chat --pty` 需要支持 OpenClaude 原生终端透传
+  - 目标不是由 AIR 复刻或管理 OpenClaude 的 spinner / Ink UI，而是让 OpenClaude 进程连接到 guest 侧 PTY slave
+  - guest `air-agent` 需要新增 PTY 请求：启动 OpenClaude CLI、持有 PTY master，并通过 vsock 与 host AIR 做纯 byte 双向桥接
+  - host AIR 需要进入本地 terminal raw mode，把 stdin/stdout 与 guest PTY 连接起来，并支持窗口 resize 透传
+  - PTY 数据流中不能插入 JSON frame、前缀、状态包装或 synthetic 文案；handshake 之后只做透明字节转发
+  - 该模式应与现有 gRPC `air chat` 并存，用于需要原生 TTY UI、颜色、光标控制、spinner 动画和完整 OpenClaude stdout/stderr 的场景
+
 - Firecracker workspace 仍然是镜像/overlay 模型
   - 当前不能直接切换为 `virtio-fs`
   - 虚拟机感过重，host / guest 工作区割裂感明显

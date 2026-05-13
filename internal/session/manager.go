@@ -152,7 +152,7 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (*model.Session, error) 
 		StorageMiB:    opts.StorageMiB,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("start %s runtime session %s: %w", resolvedProvider, id, err)
 	}
 
 	now := time.Now().UTC()
@@ -168,7 +168,7 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (*model.Session, error) 
 	}
 
 	if err := m.store.Save(s); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("save session %s: %w", id, err)
 	}
 
 	return s, nil
@@ -402,7 +402,7 @@ func (m *Manager) GC(opts GCOptions) (*GCResult, error) {
 	}
 
 	result := &GCResult{
-		Items:   make([]GCItem, 0, len(items)),
+		Items: make([]GCItem, 0, len(items)),
 	}
 	known := make(map[string]struct{}, len(items))
 
