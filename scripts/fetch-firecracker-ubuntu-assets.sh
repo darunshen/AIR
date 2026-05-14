@@ -29,6 +29,12 @@ OUTPUT_DIR="${1:-assets/firecracker}"
 ARCH="${AIR_FIRECRACKER_ARCH:-$(uname -m)}"
 
 case "${ARCH}" in
+  amd64)
+    ARCH="x86_64"
+    ;;
+  arm64)
+    ARCH="aarch64"
+    ;;
   x86_64|aarch64)
     ;;
   *)
