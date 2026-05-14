@@ -1067,3 +1067,53 @@ func TestBuildOpenClaudePTYGlobalConfigApprovesAnthropicAPIKey(t *testing.T) {
 		t.Fatalf("expected ANTHROPIC_MODEL in env, got %#v", got)
 	}
 }
+
+func TestTerminalTitlePrefixWriterPrefixesOSC0And2(t *testing.T) {
+	t.Helper()
+
+	var out bytes.Buffer
+	writer := newTerminalTitlePrefixWriter(&out, "AIR-")
+	if _, err := writer.Write([]byte("before\x1b]0;Open Claude\a middle \x1b]2;Flowing\x1b\\after")); err != nil {
+		t.Fatalf("write terminal title stream: %v", err)
+	}
+
+	got := out.String()
+	want := "before\x1b]0;AIR-Open Claude\a middle \x1b]2;AIR-Flowing\x1b\\after"
+	if got != want {
+		t.Fatalf("unexpected title-prefixed stream:\nwant %q\n got %q", want, got)
+	}
+}
+
+func TestTerminalTitlePrefixWriterHandlesSplitOSC(t *testing.T) {
+	t.Helper()
+
+	var out bytes.Buffer
+	writer := newTerminalTitlePrefixWriter(&out, "AIR-")
+	for _, chunk := range []string{"a\x1b", "]0;Open", " Claude", "\ab"} {
+		if _, err := writer.Write([]byte(chunk)); err != nil {
+			t.Fatalf("write terminal title chunk %q: %v", chunk, err)
+		}
+	}
+
+	got := out.String()
+	want := "a\x1b]0;AIR-Open Claude\ab"
+	if got != want {
+		t.Fatalf("unexpected split title-prefixed stream:\nwant %q\n got %q", want, got)
+	}
+}
+
+func TestTerminalTitlePrefixWriterAvoidsDoublePrefix(t *testing.T) {
+	t.Helper()
+
+	var out bytes.Buffer
+	writer := newTerminalTitlePrefixWriter(&out, "AIR-")
+	if _, err := writer.Write([]byte("\x1b]0;AIR-Open Claude\a")); err != nil {
+		t.Fatalf("write terminal title stream: %v", err)
+	}
+
+	got := out.String()
+	want := "\x1b]0;AIR-Open Claude\a"
+	if got != want {
+		t.Fatalf("unexpected already-prefixed title stream:\nwant %q\n got %q", want, got)
+	}
+}

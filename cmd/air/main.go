@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1877,10 +1878,115 @@ func runSessionPTYWithEnv(ctx context.Context, manager *session.Manager, session
 		Command: command,
 		Env:     env,
 		Stdin:   os.Stdin,
-		Stdout:  os.Stdout,
+		Stdout:  newTerminalTitlePrefixWriter(os.Stdout, "AIR-"),
 		Rows:    rows,
 		Cols:    cols,
 	})
+}
+
+type terminalTitlePrefixWriter struct {
+	dst    io.Writer
+	prefix string
+	buf    []byte
+}
+
+func newTerminalTitlePrefixWriter(dst io.Writer, prefix string) io.Writer {
+	if prefix == "" {
+		return dst
+	}
+	return &terminalTitlePrefixWriter{dst: dst, prefix: prefix}
+}
+
+func (w *terminalTitlePrefixWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		processed, ok, err := w.flushTerminalTitlePrefixBuffer(false)
+		if err != nil {
+			return 0, err
+		}
+		if !ok {
+			break
+		}
+		w.buf = w.buf[processed:]
+	}
+	return len(p), nil
+}
+
+func (w *terminalTitlePrefixWriter) flushTerminalTitlePrefixBuffer(final bool) (int, bool, error) {
+	oscStart := bytes.Index(w.buf, []byte("\x1b]"))
+	if oscStart < 0 {
+		writeLen := len(w.buf)
+		if !final && writeLen > 0 && w.buf[writeLen-1] == '\x1b' {
+			writeLen--
+		}
+		if writeLen > 0 {
+			if _, err := w.dst.Write(w.buf[:writeLen]); err != nil {
+				return 0, false, err
+			}
+			return writeLen, true, nil
+		}
+		return 0, false, nil
+	}
+	if oscStart > 0 {
+		if _, err := w.dst.Write(w.buf[:oscStart]); err != nil {
+			return 0, false, err
+		}
+		return oscStart, true, nil
+	}
+	end, endLen, complete := findOSCTerminator(w.buf[2:])
+	if !complete {
+		if final {
+			if _, err := w.dst.Write(w.buf); err != nil {
+				return 0, false, err
+			}
+			return len(w.buf), true, nil
+		}
+		return 0, false, nil
+	}
+	end += 2
+	seqEnd := end + endLen
+	seq := w.buf[:seqEnd]
+	if prefixed := prefixTerminalTitleOSC(seq, w.prefix); prefixed != nil {
+		if _, err := w.dst.Write(prefixed); err != nil {
+			return 0, false, err
+		}
+	} else if _, err := w.dst.Write(seq); err != nil {
+		return 0, false, err
+	}
+	return seqEnd, true, nil
+}
+
+func findOSCTerminator(data []byte) (int, int, bool) {
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\a' {
+			return i, 1, true
+		}
+		if data[i] == '\x1b' && i+1 < len(data) && data[i+1] == '\\' {
+			return i, 2, true
+		}
+	}
+	return 0, 0, false
+}
+
+func prefixTerminalTitleOSC(seq []byte, prefix string) []byte {
+	payload := seq[2:]
+	sep := bytes.IndexByte(payload, ';')
+	if sep < 0 {
+		return nil
+	}
+	code := string(payload[:sep])
+	if code != "0" && code != "2" {
+		return nil
+	}
+	title := payload[sep+1:]
+	if bytes.HasPrefix(title, []byte(prefix)) {
+		return seq
+	}
+	out := make([]byte, 0, len(seq)+len(prefix))
+	out = append(out, seq[:2+sep+1]...)
+	out = append(out, prefix...)
+	out = append(out, title...)
+	return out
 }
 
 func terminalSize() (uint16, uint16) {
