@@ -37,7 +37,6 @@ GUEST_HOST_COMMANDS=(
   curl
   git
   node
-  rg
 )
 GUEST_HOST_PATHS=(
   /etc/bash.bashrc
@@ -132,6 +131,7 @@ require_cmd readelf
 require_cmd readlink
 require_cmd rm
 require_cmd truncate
+require_cmd tar
 require_cmd unzip
 require_cmd wc
 require_cmd ldd
@@ -204,8 +204,54 @@ copy_host_command_into_rootfs() {
   fi
 }
 
+install_ripgrep_into_rootfs() {
+  local dest_root="$1"
+  local arch="$2"
+  local source_path
+  local rg_asset_arch
+  local rg_version="14.1.1"
+  local rg_archive
+  local rg_extract_dir
+  local rg_binary
+
+  source_path="$(command -v rg || true)"
+  if [[ -n "${source_path}" ]]; then
+    copy_host_command_into_rootfs "${dest_root}" rg
+    return 0
+  fi
+
+  case "${arch}" in
+    x86_64)
+      rg_asset_arch="x86_64-unknown-linux-musl"
+      ;;
+    aarch64)
+      rg_asset_arch="aarch64-unknown-linux-gnu"
+      ;;
+    *)
+      echo "unsupported ripgrep architecture: ${arch}" >&2
+      return 1
+      ;;
+  esac
+
+  rg_archive="${tmpdir}/ripgrep-${rg_version}-${rg_asset_arch}.tar.gz"
+  rg_extract_dir="${tmpdir}/ripgrep"
+  echo "Host rg not found; downloading ripgrep ${rg_version} for ${rg_asset_arch}..."
+  curl -fsSL \
+    "https://github.com/BurntSushi/ripgrep/releases/download/${rg_version}/ripgrep-${rg_version}-${rg_asset_arch}.tar.gz" \
+    -o "${rg_archive}"
+  mkdir -p "${rg_extract_dir}"
+  tar -xzf "${rg_archive}" -C "${rg_extract_dir}"
+  rg_binary="$(find "${rg_extract_dir}" -type f -name rg | head -n1)"
+  if [[ -z "${rg_binary}" || ! -x "${rg_binary}" ]]; then
+    echo "downloaded ripgrep archive does not contain executable rg" >&2
+    return 1
+  fi
+  install -D -m 0755 "${rg_binary}" "${dest_root}/usr/bin/rg"
+}
+
 inject_guest_host_tooling() {
   local dest_root="$1"
+  local arch="$2"
   local command_name
   local path
 
@@ -213,6 +259,7 @@ inject_guest_host_tooling() {
   for command_name in "${GUEST_HOST_COMMANDS[@]}"; do
     copy_host_command_into_rootfs "${dest_root}" "${command_name}"
   done
+  install_ripgrep_into_rootfs "${dest_root}" "${arch}"
   for path in "${GUEST_HOST_PATHS[@]}"; do
     copy_path_into_rootfs "${dest_root}" "${path}"
   done
@@ -359,7 +406,7 @@ chmod 0755 "${tmpdir}/openclaude-grpc"
 echo "Extracting Ubuntu rootfs..."
 debugfs -R "rdump / ${stage_root}" "${UBUNTU_ROOTFS}" >/dev/null 2>&1
 
-inject_guest_host_tooling "${stage_root}"
+inject_guest_host_tooling "${stage_root}" "${arch}"
 
 echo "Injecting AIR guest agent and OpenClaude runtime..."
 mkdir -p "${stage_root}/opt" "${stage_root}/usr/local/bin" "${stage_root}/var/log" "${stage_root}/run" "${stage_root}/mnt/workspace-ro" "${stage_root}/mnt/workspace-rw" "${stage_root}/workspace"
@@ -408,7 +455,7 @@ Prepared Ubuntu-based Firecracker rootfs with OpenClaude:
   Guest Bun binary: /usr/local/bin/bun
   Guest launcher: /usr/local/bin/openclaude-grpc
   Guest air-agent: /usr/bin/air-agent
-  Guest extra tooling: ${GUEST_HOST_COMMANDS[*]}
+  Guest extra tooling: ${GUEST_HOST_COMMANDS[*]} rg
 
 Recommended environment:
   export AIR_FIRECRACKER_ROOTFS=${OUTPUT_ROOTFS}
