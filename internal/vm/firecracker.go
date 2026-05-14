@@ -19,7 +19,6 @@ import (
 	"unicode"
 
 	"github.com/darunshen/AIR/internal/guestapi"
-	"golang.org/x/sys/unix"
 )
 
 type firecrackerRuntime struct {
@@ -1234,65 +1233,26 @@ func copyFile(dst, src string) error {
 	}
 	defer target.Close()
 
-	if err := unix.IoctlFileClone(int(target.Fd()), int(source.Fd())); err == nil {
+	if tryCloneFile(target, source) {
 		return target.Sync()
 	}
 
-	if err := copyFileSparse(target, source, info.Size()); err != nil {
+	if err := copyFileSparse(target, source, info.Size()); err == nil {
+		return target.Sync()
+	}
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if err := target.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := target.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err := io.Copy(target, source); err != nil {
 		return err
 	}
 	return target.Sync()
-}
-
-func copyFileSparse(target *os.File, source *os.File, size int64) error {
-	if size == 0 {
-		return nil
-	}
-	offset := int64(0)
-	for offset < size {
-		dataOffset, err := unix.Seek(int(source.Fd()), offset, unix.SEEK_DATA)
-		if err != nil {
-			if err == unix.ENXIO {
-				return target.Truncate(size)
-			}
-			if err == unix.EINVAL {
-				_, copyErr := source.Seek(0, io.SeekStart)
-				if copyErr != nil {
-					return copyErr
-				}
-				_, copyErr = io.Copy(target, source)
-				return copyErr
-			}
-			return err
-		}
-		if dataOffset > offset {
-			if err := target.Truncate(dataOffset); err != nil {
-				return err
-			}
-		}
-		holeOffset, err := unix.Seek(int(source.Fd()), dataOffset, unix.SEEK_HOLE)
-		if err != nil {
-			if err == unix.ENXIO {
-				holeOffset = size
-			} else {
-				return err
-			}
-		}
-		if holeOffset > size {
-			holeOffset = size
-		}
-		if _, err := source.Seek(dataOffset, io.SeekStart); err != nil {
-			return err
-		}
-		if _, err := target.Seek(dataOffset, io.SeekStart); err != nil {
-			return err
-		}
-		if _, err := io.CopyN(target, source, holeOffset-dataOffset); err != nil {
-			return err
-		}
-		offset = holeOffset
-	}
-	return target.Truncate(size)
 }
 
 func (r *firecrackerRuntime) waitForGuestReady(sessionID string, paths firecrackerPaths) error {
