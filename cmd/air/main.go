@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -2567,14 +2569,23 @@ func runOpenClaudePTYOneCommand(ctx context.Context, manager *session.Manager, o
 	}
 	fmt.Fprintf(os.Stderr, "air: firecracker session ready in %s\n", formatStepDuration(time.Since(startedAt)))
 	fmt.Fprintf(os.Stderr, "air: created session %s provider=%s\n", s.ID, s.Provider)
-	command := renderOpenClaudePTYCommand("/opt/openclaude")
+	env := collectOpenClaudePTYEnv(os.Environ())
+	command := renderOpenClaudePTYCommand("/opt/openclaude", env)
 	fmt.Fprintf(os.Stderr, "air: attaching OpenClaude PTY on session %s\n", s.ID)
-	return runSessionPTYWithEnv(ctx, manager, s.ID, command, collectOpenClaudePTYEnv(os.Environ()))
+	return runSessionPTYWithEnv(ctx, manager, s.ID, command, env)
 }
 
-func renderOpenClaudePTYCommand(repoPath string) string {
+func renderOpenClaudePTYCommand(repoPath string, env map[string]string) string {
 	repo := shellArg(repoPath)
+	configDir := strings.TrimSpace(env["CLAUDE_CONFIG_DIR"])
+	if configDir == "" {
+		configDir = "/root/.openclaude"
+	}
+	configFile := path.Join(configDir, ".openclaude.json")
+	configJSON := buildOpenClaudePTYGlobalConfig(env)
 	return strings.Join([]string{
+		"mkdir -p " + shellArg(configDir) + " || exit 1;",
+		"printf '%s\\n' " + shellArg(configJSON) + " > " + shellArg(configFile) + " || exit 1;",
 		"cd " + repo + " || exit 1;",
 		"if [ ! -f ./dist/cli.mjs ]; then",
 		"echo 'openclaude build not found: ./dist/cli.mjs missing in guest image' >&2;",
@@ -2637,11 +2648,12 @@ func collectOpenClaudePTYEnv(environ []string) map[string]string {
 	}
 	applyOpenClaudePTYProfileFallback(out)
 	applyOpenClaudePTYRuntimeFallbacks(out)
+	normalizeOpenClaudePTYAuthEnv(out)
 	return out
 }
 
 func applyOpenClaudePTYProfileFallback(env map[string]string) {
-	if hasOpenAIEnv(env) || hasAnthropicEnv(env) {
+	if hasAnyProviderEnv(env) {
 		return
 	}
 	profile, err := loadChatProfile()
@@ -2657,7 +2669,6 @@ func applyOpenClaudePTYProfileFallback(env map[string]string) {
 			env["ANTHROPIC_MODEL"] = profile.AnthropicModel
 		}
 		if profile.AnthropicAuthToken != "" {
-			env["ANTHROPIC_AUTH_TOKEN"] = profile.AnthropicAuthToken
 			env["ANTHROPIC_API_KEY"] = profile.AnthropicAuthToken
 		}
 	default:
@@ -2678,12 +2689,127 @@ func applyOpenClaudePTYRuntimeFallbacks(env map[string]string) {
 	env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	env["HOME"] = "/root"
 	env["SHELL"] = "/bin/sh"
+	env["CLAUDE_CONFIG_DIR"] = "/root/.openclaude"
+	guestProxyURL := "http://127.0.0.1:18080"
+	if shouldUseFirecrackerGuestProxy(env["HTTP_PROXY"]) {
+		env["HTTP_PROXY"] = guestProxyURL
+	}
+	if shouldUseFirecrackerGuestProxy(env["HTTPS_PROXY"]) {
+		env["HTTPS_PROXY"] = guestProxyURL
+	}
+	if shouldUseFirecrackerGuestProxy(env["ALL_PROXY"]) {
+		env["ALL_PROXY"] = guestProxyURL
+	}
 	if env["TERM"] == "" {
 		env["TERM"] = "xterm-256color"
 	}
 	if env["LANG"] == "" && env["LC_ALL"] == "" {
 		env["LANG"] = "C.UTF-8"
 	}
+}
+
+func normalizeOpenClaudePTYAuthEnv(env map[string]string) {
+	if isTruthyEnvValue(env["CLAUDE_CODE_USE_OPENAI"]) {
+		delete(env, "ANTHROPIC_API_KEY")
+		delete(env, "ANTHROPIC_AUTH_TOKEN")
+		delete(env, "ANTHROPIC_BASE_URL")
+		delete(env, "ANTHROPIC_MODEL")
+		return
+	}
+	if env["ANTHROPIC_API_KEY"] == "" && env["ANTHROPIC_AUTH_TOKEN"] != "" {
+		env["ANTHROPIC_API_KEY"] = env["ANTHROPIC_AUTH_TOKEN"]
+	}
+	if env["ANTHROPIC_API_KEY"] != "" || env["ANTHROPIC_BASE_URL"] != "" || env["ANTHROPIC_MODEL"] != "" {
+		delete(env, "ANTHROPIC_AUTH_TOKEN")
+		delete(env, "CLAUDE_CODE_USE_OPENAI")
+		delete(env, "OPENAI_API_KEY")
+		delete(env, "OPENAI_BASE_URL")
+		delete(env, "OPENAI_MODEL")
+	}
+}
+
+func buildOpenClaudePTYGlobalConfig(env map[string]string) string {
+	config := map[string]any{}
+	if len(env) > 0 {
+		configEnv := make(map[string]string, len(env))
+		for key, value := range env {
+			if value == "" {
+				continue
+			}
+			configEnv[key] = value
+		}
+		if len(configEnv) > 0 {
+			config["env"] = configEnv
+		}
+	}
+	if apiKey := strings.TrimSpace(env["ANTHROPIC_API_KEY"]); apiKey != "" {
+		config["primaryApiKey"] = apiKey
+		config["customApiKeyResponses"] = map[string]any{
+			"approved": []string{normalizeOpenClaudePTYAPIKeyForConfig(apiKey)},
+		}
+	}
+	body, err := json.Marshal(config)
+	if err != nil {
+		return "{}"
+	}
+	return string(body)
+}
+
+func normalizeOpenClaudePTYAPIKeyForConfig(apiKey string) string {
+	if len(apiKey) <= 20 {
+		return apiKey
+	}
+	return apiKey[len(apiKey)-20:]
+}
+
+func shouldUseFirecrackerGuestProxy(value string) bool {
+	if value == "" {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	switch host {
+	case "", "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTruthyEnvValue(value string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(value))
+	return normalized != "" && normalized != "0" && normalized != "false" && normalized != "no"
+}
+
+func hasAnyProviderEnv(env map[string]string) bool {
+	keys := []string{
+		"CLAUDE_CODE_USE_OPENAI",
+		"CLAUDE_CODE_USE_GEMINI",
+		"OPENAI_API_KEY",
+		"OPENAI_BASE_URL",
+		"OPENAI_MODEL",
+		"DEEPSEEK_API_KEY",
+		"DEEPSEEK_BASE_URL",
+		"DEEPSEEK_MODEL",
+		"GEMINI_API_KEY",
+		"GOOGLE_API_KEY",
+		"GEMINI_BASE_URL",
+		"GEMINI_MODEL",
+		"GEMINI_AUTH_MODE",
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"ANTHROPIC_BASE_URL",
+		"ANTHROPIC_MODEL",
+	}
+	for _, key := range keys {
+		if env[key] != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func hasOpenAIEnv(env map[string]string) bool {

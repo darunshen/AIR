@@ -843,9 +843,20 @@ func TestOpenClaudeChatScriptDefaultsToAutoApproveAll(t *testing.T) {
 func TestRenderOpenClaudePTYCommandUsesNativeCLI(t *testing.T) {
 	t.Helper()
 
-	command := renderOpenClaudePTYCommand("/opt/open claude")
+	command := renderOpenClaudePTYCommand("/opt/open claude", map[string]string{
+		"CLAUDE_CONFIG_DIR":  "/root/.openclaude",
+		"ANTHROPIC_API_KEY":  "sk-anthropic",
+		"ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+		"ANTHROPIC_MODEL":    "deepseek-v4-pro[1m]",
+	})
 	if !strings.Contains(command, "cd '/opt/open claude'") {
 		t.Fatalf("expected shell-quoted repo path, got %q", command)
+	}
+	if !strings.Contains(command, "mkdir -p '/root/.openclaude'") {
+		t.Fatalf("expected config dir creation, got %q", command)
+	}
+	if !strings.Contains(command, "/root/.openclaude/.openclaude.json") {
+		t.Fatalf("expected config file path, got %q", command)
 	}
 	if !strings.Contains(command, "exec /usr/local/bin/bun ./dist/cli.mjs") {
 		t.Fatalf("expected bun dist startup, got %q", command)
@@ -887,6 +898,9 @@ func TestCollectOpenClaudePTYEnvAllowsOnlyRuntimeEnv(t *testing.T) {
 	if env["SHELL"] != "/bin/sh" {
 		t.Fatalf("expected guest shell fallback, got %+v", env)
 	}
+	if env["CLAUDE_CONFIG_DIR"] != "/root/.openclaude" {
+		t.Fatalf("expected guest config dir fallback, got %+v", env)
+	}
 	if _, ok := env["SECRET_TOKEN"]; ok {
 		t.Fatalf("unexpected secret forwarded: %+v", env)
 	}
@@ -919,8 +933,11 @@ func TestCollectOpenClaudePTYEnvFallsBackToSavedProfile(t *testing.T) {
 	if env["ANTHROPIC_MODEL"] != "deepseek-v4-pro[1m]" {
 		t.Fatalf("unexpected anthropic model: %+v", env)
 	}
-	if env["ANTHROPIC_AUTH_TOKEN"] != "sk-anthropic" {
-		t.Fatalf("unexpected anthropic auth token: %+v", env)
+	if env["ANTHROPIC_API_KEY"] != "sk-anthropic" {
+		t.Fatalf("unexpected anthropic api key: %+v", env)
+	}
+	if env["ANTHROPIC_AUTH_TOKEN"] != "" {
+		t.Fatalf("expected anthropic auth token to be normalized away: %+v", env)
 	}
 	if env["TERM"] != "xterm-256color" {
 		t.Fatalf("expected default TERM, got %+v", env)
@@ -928,7 +945,90 @@ func TestCollectOpenClaudePTYEnvFallsBackToSavedProfile(t *testing.T) {
 	if env["HOME"] != "/root" {
 		t.Fatalf("expected guest HOME, got %+v", env)
 	}
+	if env["CLAUDE_CONFIG_DIR"] != "/root/.openclaude" {
+		t.Fatalf("expected guest config dir, got %+v", env)
+	}
 	if env["PATH"] != "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" {
 		t.Fatalf("expected guest PATH, got %+v", env)
+	}
+}
+
+func TestCollectOpenClaudePTYEnvRewritesLoopbackProxyToGuestProxy(t *testing.T) {
+	t.Helper()
+
+	env := collectOpenClaudePTYEnv([]string{
+		"HTTP_PROXY=http://127.0.0.1:3067/",
+		"HTTPS_PROXY=http://127.0.0.1:3067/",
+		"ALL_PROXY=socks://127.0.0.1:3067/",
+	})
+
+	if env["HTTP_PROXY"] != "http://127.0.0.1:18080" {
+		t.Fatalf("expected guest HTTP proxy, got %+v", env)
+	}
+	if env["HTTPS_PROXY"] != "http://127.0.0.1:18080" {
+		t.Fatalf("expected guest HTTPS proxy, got %+v", env)
+	}
+	if env["ALL_PROXY"] != "http://127.0.0.1:18080" {
+		t.Fatalf("expected guest ALL proxy, got %+v", env)
+	}
+}
+
+func TestCollectOpenClaudePTYEnvNormalizesAnthropicAuthToken(t *testing.T) {
+	t.Helper()
+
+	env := collectOpenClaudePTYEnv([]string{
+		"ANTHROPIC_AUTH_TOKEN=sk-anthropic",
+		"ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic",
+		"ANTHROPIC_MODEL=deepseek-v4-pro[1m]",
+	})
+
+	if env["ANTHROPIC_API_KEY"] != "sk-anthropic" {
+		t.Fatalf("expected anthropic api key, got %+v", env)
+	}
+	if env["ANTHROPIC_AUTH_TOKEN"] != "" {
+		t.Fatalf("expected anthropic auth token to be removed, got %+v", env)
+	}
+	if env["CLAUDE_CODE_USE_OPENAI"] != "" {
+		t.Fatalf("expected openai flag removed for anthropic env, got %+v", env)
+	}
+}
+
+func TestBuildOpenClaudePTYGlobalConfigApprovesAnthropicAPIKey(t *testing.T) {
+	t.Helper()
+
+	apiKey := "sk-1234567890ABCDEFGHIJKLMN"
+	body := buildOpenClaudePTYGlobalConfig(map[string]string{
+		"ANTHROPIC_API_KEY":  apiKey,
+		"ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+		"ANTHROPIC_MODEL":    "deepseek-v4-pro[1m]",
+		"CLAUDE_CONFIG_DIR":  "/root/.openclaude",
+	})
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if got := decoded["primaryApiKey"]; got != apiKey {
+		t.Fatalf("expected primaryApiKey %q, got %#v", apiKey, got)
+	}
+
+	custom, ok := decoded["customApiKeyResponses"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected customApiKeyResponses object, got %#v", decoded["customApiKeyResponses"])
+	}
+	approved, ok := custom["approved"].([]any)
+	if !ok || len(approved) != 1 {
+		t.Fatalf("expected approved list, got %#v", custom["approved"])
+	}
+	if got := approved[0]; got != normalizeOpenClaudePTYAPIKeyForConfig(apiKey) {
+		t.Fatalf("unexpected approved key suffix: %#v", got)
+	}
+
+	env, ok := decoded["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected env object, got %#v", decoded["env"])
+	}
+	if got := env["ANTHROPIC_MODEL"]; got != "deepseek-v4-pro[1m]" {
+		t.Fatalf("expected ANTHROPIC_MODEL in env, got %#v", got)
 	}
 }
