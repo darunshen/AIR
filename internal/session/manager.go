@@ -52,12 +52,13 @@ type RunResult struct {
 }
 
 type CreateOptions struct {
-	Provider      string
-	Network       string
-	MemoryMiB     int
-	VCPUCount     int
-	StorageMiB    int
-	WorkspacePath string
+	Provider       string
+	Network        string
+	MemoryMiB      int
+	VCPUCount      int
+	StorageMiB     int
+	WorkspacePath  string
+	WorkspaceCache bool
 }
 
 type ExportWorkspaceResult struct {
@@ -147,9 +148,10 @@ func (m *Manager) CreateWithOptions(opts CreateOptions) (*model.Session, error) 
 	}
 
 	vmid, err := runtime.StartWithOptions(id, vm.StartOptions{
-		WorkspacePath: opts.WorkspacePath,
-		Network:       opts.Network,
-		StorageMiB:    opts.StorageMiB,
+		WorkspacePath:  opts.WorkspacePath,
+		WorkspaceCache: opts.WorkspaceCache,
+		Network:        opts.Network,
+		StorageMiB:     opts.StorageMiB,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start %s runtime session %s: %w", resolvedProvider, id, err)
@@ -678,12 +680,7 @@ func classifyRunErrorType(stage string, err error) RunErrorType {
 
 func (m *Manager) cleanupStoppedSession(runtime vm.Runtime, s *model.Session, info *vm.InspectInfo) error {
 	if info != nil && info.Exists {
-		if err := m.deleteSessionRuntime(runtime, s); err != nil {
-			if info.RootPath == "" {
-				return err
-			}
-			return err
-		}
+		return m.deleteSessionRuntime(runtime, s)
 	}
 	return m.store.Delete(s.ID)
 }

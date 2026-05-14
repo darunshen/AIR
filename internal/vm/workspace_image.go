@@ -1,6 +1,8 @@
 package vm
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -66,6 +68,59 @@ func buildWorkspaceImage(outputPath, sourcePath string) error {
 	}
 
 	return createExt4FromDir(outputPath, stageRoot, targetSize, inodeTarget)
+}
+
+func buildCachedWorkspaceImage(outputPath, sourcePath, cacheRoot string) (bool, error) {
+	sourceInfo, err := os.Stat(sourcePath)
+	if err != nil {
+		return false, err
+	}
+	if !sourceInfo.IsDir() {
+		return false, fmt.Errorf("workspace path must be a directory: %s", sourcePath)
+	}
+	absSource, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return false, err
+	}
+	cacheKey := workspaceCacheKey(absSource)
+	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+		return false, err
+	}
+	cachePath := filepath.Join(cacheRoot, cacheKey+".ext4")
+	if _, err := os.Stat(cachePath); err == nil {
+		return true, linkOrCopyWorkspaceCache(outputPath, cachePath)
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+
+	tmpPath := filepath.Join(cacheRoot, "."+cacheKey+"-"+fmt.Sprintf("%d", os.Getpid())+".tmp")
+	_ = os.Remove(tmpPath)
+	if err := buildWorkspaceImage(tmpPath, sourcePath); err != nil {
+		_ = os.Remove(tmpPath)
+		return false, err
+	}
+	if err := os.Rename(tmpPath, cachePath); err != nil {
+		_ = os.Remove(tmpPath)
+		if _, statErr := os.Stat(cachePath); statErr != nil {
+			return false, err
+		}
+	}
+	return false, linkOrCopyWorkspaceCache(outputPath, cachePath)
+}
+
+func workspaceCacheKey(absSource string) string {
+	sum := sha256.Sum256([]byte(absSource))
+	return hex.EncodeToString(sum[:])
+}
+
+func linkOrCopyWorkspaceCache(outputPath, cachePath string) error {
+	if err := os.RemoveAll(outputPath); err != nil {
+		return err
+	}
+	if err := os.Link(cachePath, outputPath); err == nil {
+		return nil
+	}
+	return copyFile(outputPath, cachePath)
 }
 
 func createEmptyExt4(outputPath string, size int64, inodeCount int64) error {

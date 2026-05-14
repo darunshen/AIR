@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/darunshen/AIR/internal/model"
 	"github.com/darunshen/AIR/internal/vm"
 )
 
@@ -366,6 +367,67 @@ func TestSessionGCRemovesStoppedSessions(t *testing.T) {
 	}
 	if _, err := manager.store.Get(running.ID); err != nil {
 		t.Fatalf("expected running session %s to remain: %v", running.ID, err)
+	}
+}
+
+func TestSessionGCRemovesStoppedSessionWithRuntimeDir(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	t.Setenv("AIR_FIRECRACKER_BIN", filepath.Join(root, "firecracker"))
+	t.Setenv("AIR_FIRECRACKER_KERNEL", filepath.Join(root, "vmlinux.bin"))
+	t.Setenv("AIR_FIRECRACKER_ROOTFS", filepath.Join(root, "rootfs.ext4"))
+	t.Setenv("AIR_KVM_DEVICE", filepath.Join(root, "kvm"))
+	for _, path := range []string{
+		filepath.Join(root, "firecracker"),
+		filepath.Join(root, "vmlinux.bin"),
+		filepath.Join(root, "rootfs.ext4"),
+		filepath.Join(root, "kvm"),
+	} {
+		if err := os.WriteFile(path, []byte("test"), 0o755); err != nil {
+			t.Fatalf("write runtime fixture %s: %v", path, err)
+		}
+	}
+
+	manager, err := NewManagerWithPaths(
+		filepath.Join(root, "data", "sessions.json"),
+		filepath.Join(root, "runtime", "sessions"),
+	)
+	if err != nil {
+		t.Fatalf("new manager: %v", err)
+	}
+
+	stopped := &model.Session{
+		ID:         "sess_stoppedfirecracker",
+		VMID:       "sess_stoppedfirecracker",
+		Provider:   "firecracker",
+		Status:     "stopped",
+		CreatedAt:  time.Now(),
+		LastUsedAt: time.Now(),
+	}
+	if err := manager.store.Save(stopped); err != nil {
+		t.Fatalf("save stopped session: %v", err)
+	}
+	sessionDir := filepath.Join(root, "runtime", "sessions", "firecracker", stopped.ID)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("create stopped runtime dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "firecracker.pid"), []byte("99999999"), 0o644); err != nil {
+		t.Fatalf("write stopped runtime pid: %v", err)
+	}
+
+	result, err := manager.GC(GCOptions{})
+	if err != nil {
+		t.Fatalf("gc: %v", err)
+	}
+	if result.Checked != 1 {
+		t.Fatalf("expected checked=1, got %d", result.Checked)
+	}
+	if result.Removed != 1 {
+		t.Fatalf("expected removed=1, got %d", result.Removed)
+	}
+	if _, err := manager.store.Get(stopped.ID); err == nil {
+		t.Fatalf("expected stopped session %s removed from store", stopped.ID)
 	}
 }
 

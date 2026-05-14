@@ -422,7 +422,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air init firecracker [--source official|custom] [--dir PATH] [--yes]")
 	fmt.Fprintln(os.Stderr, "  air doctor [--provider local|firecracker] [--human]")
 	fmt.Fprintln(os.Stderr, "  air gc --all")
-	fmt.Fprintln(os.Stderr, "  air chat [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--workspace PATH] [--listen 127.0.0.1:50052] [--pty] [--reconfigure]")
+	fmt.Fprintln(os.Stderr, "  air chat [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--workspace PATH] [--workspace-cache] [--listen 127.0.0.1:50052] [--pty] [--auto-approve] [--reconfigure]")
 	fmt.Fprintln(os.Stderr, "  air chat gc [--dry-run] [--force]")
 	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--network none|full] [--timeout 30s] [--memory-mib 256] [--storage-mib 1024] [--vcpu-count 1] [--workspace PATH] [--human] -- <command>")
 	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--workspace PATH]")
@@ -504,14 +504,16 @@ type initFirecrackerCLIOptions struct {
 }
 
 type chatCLIOptions struct {
-	Provider      string
-	Network       string
-	MemoryMiB     int
-	StorageMiB    int
-	Reconfigure   bool
-	PTY           bool
-	WorkspacePath string
-	ListenAddress string
+	Provider       string
+	Network        string
+	MemoryMiB      int
+	StorageMiB     int
+	Reconfigure    bool
+	PTY            bool
+	AutoApprove    bool
+	WorkspaceCache bool
+	WorkspacePath  string
+	ListenAddress  string
 }
 
 type chatGCCLIOptions struct {
@@ -611,6 +613,10 @@ func parseChatFlags(args []string) (chatCLIOptions, error) {
 			opts.Reconfigure = true
 		case arg == "--pty":
 			opts.PTY = true
+		case arg == "--auto-approve":
+			opts.AutoApprove = true
+		case arg == "--workspace-cache":
+			opts.WorkspaceCache = true
 		case arg == "--provider":
 			if i+1 >= len(args) || args[i+1] == "" {
 				return chatCLIOptions{}, errors.New("provider must not be empty")
@@ -1018,6 +1024,13 @@ func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions)
 	}
 
 	if provider == "firecracker" {
+		fmt.Fprintln(os.Stdout, "air: ensuring OpenClaude guest image...")
+		guestImageStartedAt := time.Now()
+		if err := ensureOpenClaudeGuestRootfsInteractive(); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "air: OpenClaude guest image ready in %s\n", formatStepDuration(time.Since(guestImageStartedAt)))
+
 		fmt.Fprintln(os.Stdout, "air: checking firecracker runtime...")
 		doctorStartedAt := time.Now()
 		cfg := vm.ResolveConfig("runtime/sessions")
@@ -1037,12 +1050,6 @@ func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions)
 			}
 		}
 		fmt.Fprintf(os.Stdout, "air: firecracker runtime check completed in %s\n", formatStepDuration(time.Since(doctorStartedAt)))
-		fmt.Fprintln(os.Stdout, "air: ensuring OpenClaude guest image...")
-		guestImageStartedAt := time.Now()
-		if err := ensureOpenClaudeGuestRootfsInteractive(); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stdout, "air: OpenClaude guest image ready in %s\n", formatStepDuration(time.Since(guestImageStartedAt)))
 	}
 
 	fmt.Fprintln(os.Stdout, "air: ensuring OpenClaude host runtime...")
@@ -1066,14 +1073,16 @@ func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions)
 	fmt.Fprintln(os.Stdout, "air: starting firecracker session and openclaude...")
 
 	runOpts := openClaudeRunCLIOptions{
-		Provider:      provider,
-		Network:       opts.Network,
-		MemoryMiB:     opts.MemoryMiB,
-		StorageMiB:    opts.StorageMiB,
-		WorkspacePath: opts.WorkspacePath,
-		RepoPath:      repoPath,
-		GuestRepoPath: "/opt/openclaude",
-		ListenAddress: opts.ListenAddress,
+		Provider:       provider,
+		Network:        opts.Network,
+		MemoryMiB:      opts.MemoryMiB,
+		StorageMiB:     opts.StorageMiB,
+		WorkspacePath:  opts.WorkspacePath,
+		WorkspaceCache: opts.WorkspaceCache,
+		RepoPath:       repoPath,
+		GuestRepoPath:  "/opt/openclaude",
+		ListenAddress:  opts.ListenAddress,
+		AutoApprove:    opts.AutoApprove,
 	}
 	refreshedManager, err := session.NewManager()
 	if err != nil {
@@ -1985,14 +1994,16 @@ type openClaudeChatCLIOptions struct {
 }
 
 type openClaudeRunCLIOptions struct {
-	Provider      string
-	Network       string
-	MemoryMiB     int
-	StorageMiB    int
-	WorkspacePath string
-	RepoPath      string
-	GuestRepoPath string
-	ListenAddress string
+	Provider       string
+	Network        string
+	MemoryMiB      int
+	StorageMiB     int
+	WorkspacePath  string
+	WorkspaceCache bool
+	RepoPath       string
+	GuestRepoPath  string
+	ListenAddress  string
+	AutoApprove    bool
 }
 
 type openClaudeTranscriptEvent struct {
@@ -2552,11 +2563,12 @@ func runOpenClaudePTYOneCommand(ctx context.Context, manager *session.Manager, o
 	}
 	startedAt := time.Now()
 	s, err := manager.CreateWithOptions(session.CreateOptions{
-		Provider:      opts.Provider,
-		Network:       opts.Network,
-		MemoryMiB:     memoryMiB,
-		StorageMiB:    opts.StorageMiB,
-		WorkspacePath: opts.WorkspacePath,
+		Provider:       opts.Provider,
+		Network:        opts.Network,
+		MemoryMiB:      memoryMiB,
+		StorageMiB:     opts.StorageMiB,
+		WorkspacePath:  opts.WorkspacePath,
+		WorkspaceCache: opts.WorkspaceCache,
 	})
 	if err != nil {
 		return fmt.Errorf("start pty session: %w", err)
@@ -2564,19 +2576,26 @@ func runOpenClaudePTYOneCommand(ctx context.Context, manager *session.Manager, o
 	fmt.Fprintf(os.Stderr, "air: firecracker session ready in %s\n", formatStepDuration(time.Since(startedAt)))
 	fmt.Fprintf(os.Stderr, "air: created session %s provider=%s\n", s.ID, s.Provider)
 	env := collectOpenClaudePTYEnv(os.Environ())
-	command := renderOpenClaudePTYCommand("/opt/openclaude", env)
+	if opts.AutoApprove {
+		env["IS_SANDBOX"] = "1"
+	}
+	command := renderOpenClaudePTYCommand("/opt/openclaude", env, opts.AutoApprove)
 	fmt.Fprintf(os.Stderr, "air: attaching OpenClaude PTY on session %s\n", s.ID)
 	return runSessionPTYWithEnv(ctx, manager, s.ID, command, env)
 }
 
-func renderOpenClaudePTYCommand(repoPath string, env map[string]string) string {
+func renderOpenClaudePTYCommand(repoPath string, env map[string]string, autoApprove bool) string {
 	repo := shellArg(repoPath)
 	configDir := strings.TrimSpace(env["CLAUDE_CONFIG_DIR"])
 	if configDir == "" {
 		configDir = "/root/.openclaude"
 	}
 	configFile := path.Join(configDir, ".openclaude.json")
-	configJSON := buildOpenClaudePTYGlobalConfig(env)
+	configJSON := buildOpenClaudePTYGlobalConfig(env, autoApprove)
+	cliArgs := "./dist/cli.mjs"
+	if autoApprove {
+		cliArgs += " --dangerously-skip-permissions"
+	}
 	return strings.Join([]string{
 		"mkdir -p " + shellArg(configDir) + " || exit 1;",
 		"printf '%s\\n' " + shellArg(configJSON) + " > " + shellArg(configFile) + " || exit 1;",
@@ -2585,8 +2604,8 @@ func renderOpenClaudePTYCommand(repoPath string, env map[string]string) string {
 		"echo 'openclaude build not found: ./dist/cli.mjs missing in guest image' >&2;",
 		"exit 127;",
 		"fi;",
-		"if [ -x /usr/local/bin/bun ]; then exec /usr/local/bin/bun ./dist/cli.mjs; fi;",
-		"if [ -x /usr/bin/node ]; then exec /usr/bin/node ./dist/cli.mjs; fi;",
+		"if [ -x /usr/local/bin/bun ]; then exec /usr/local/bin/bun " + cliArgs + "; fi;",
+		"if [ -x /usr/bin/node ]; then exec /usr/bin/node " + cliArgs + "; fi;",
 		"echo 'openclaude runtime not found: need node or bun for ./dist/cli.mjs' >&2;",
 		"exit 127;",
 	}, " ")
@@ -2722,7 +2741,7 @@ func normalizeOpenClaudePTYAuthEnv(env map[string]string) {
 	}
 }
 
-func buildOpenClaudePTYGlobalConfig(env map[string]string) string {
+func buildOpenClaudePTYGlobalConfig(env map[string]string, autoApprove bool) string {
 	config := map[string]any{}
 	if len(env) > 0 {
 		configEnv := make(map[string]string, len(env))
@@ -2737,10 +2756,12 @@ func buildOpenClaudePTYGlobalConfig(env map[string]string) string {
 		}
 	}
 	if apiKey := strings.TrimSpace(env["ANTHROPIC_API_KEY"]); apiKey != "" {
-		config["primaryApiKey"] = apiKey
 		config["customApiKeyResponses"] = map[string]any{
 			"approved": []string{normalizeOpenClaudePTYAPIKeyForConfig(apiKey)},
 		}
+	}
+	if autoApprove {
+		config["skipDangerousModePermissionPrompt"] = true
 	}
 	body, err := json.Marshal(config)
 	if err != nil {

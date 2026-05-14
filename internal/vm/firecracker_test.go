@@ -181,6 +181,24 @@ while true; do sleep 1; done
 	}
 }
 
+func TestFirecrackerStopRemovesRuntimeDirWhenPIDMissing(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	rt := &firecrackerRuntime{root: filepath.Join(root, "runtime", "firecracker")}
+	paths := rt.paths("sess_missingpid")
+	if err := os.MkdirAll(paths.base, 0o755); err != nil {
+		t.Fatalf("create runtime dir: %v", err)
+	}
+
+	if err := rt.Stop("sess_missingpid"); err != nil {
+		t.Fatalf("stop runtime with missing pid: %v", err)
+	}
+	if _, err := os.Stat(paths.base); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected runtime directory removed, got err=%v", err)
+	}
+}
+
 func TestFirecrackerDialTCPViaGuestProxy(t *testing.T) {
 	t.Helper()
 

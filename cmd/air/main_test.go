@@ -333,6 +333,7 @@ func TestParseChatFlagsSupportsReconfigure(t *testing.T) {
 		"--memory-mib", "2048",
 		"--storage-mib", "4096",
 		"--workspace", "/tmp/repo",
+		"--workspace-cache",
 		"--listen", "127.0.0.1:50060",
 		"--reconfigure",
 	})
@@ -357,6 +358,9 @@ func TestParseChatFlagsSupportsReconfigure(t *testing.T) {
 	if opts.WorkspacePath != "/tmp/repo" {
 		t.Fatalf("unexpected workspace: %q", opts.WorkspacePath)
 	}
+	if !opts.WorkspaceCache {
+		t.Fatal("expected workspace cache=true")
+	}
 	if opts.ListenAddress != "127.0.0.1:50060" {
 		t.Fatalf("unexpected listen address: %q", opts.ListenAddress)
 	}
@@ -365,12 +369,15 @@ func TestParseChatFlagsSupportsReconfigure(t *testing.T) {
 func TestParseChatFlagsSupportsPTY(t *testing.T) {
 	t.Helper()
 
-	opts, err := parseChatFlags([]string{"--pty"})
+	opts, err := parseChatFlags([]string{"--pty", "--auto-approve"})
 	if err != nil {
 		t.Fatalf("parse chat flags: %v", err)
 	}
 	if !opts.PTY {
 		t.Fatal("expected pty=true")
+	}
+	if !opts.AutoApprove {
+		t.Fatal("expected auto-approve=true")
 	}
 }
 
@@ -858,7 +865,7 @@ func TestRenderOpenClaudePTYCommandUsesNativeCLI(t *testing.T) {
 		"ANTHROPIC_API_KEY":  "sk-anthropic",
 		"ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
 		"ANTHROPIC_MODEL":    "deepseek-v4-pro[1m]",
-	})
+	}, false)
 	if !strings.Contains(command, "cd '/opt/open claude'") {
 		t.Fatalf("expected shell-quoted repo path, got %q", command)
 	}
@@ -882,6 +889,24 @@ func TestRenderOpenClaudePTYCommandUsesNativeCLI(t *testing.T) {
 	}
 	if strings.Contains(command, "src/entrypoints/cli.tsx") {
 		t.Fatalf("expected PTY launcher to avoid source entrypoint fallback, got %q", command)
+	}
+}
+
+func TestRenderOpenClaudePTYCommandSupportsAutoApprove(t *testing.T) {
+	t.Helper()
+
+	command := renderOpenClaudePTYCommand("/opt/openclaude", map[string]string{
+		"CLAUDE_CONFIG_DIR": "/root/.openclaude",
+		"IS_SANDBOX":        "1",
+	}, true)
+	if !strings.Contains(command, "./dist/cli.mjs --dangerously-skip-permissions") {
+		t.Fatalf("expected dangerously-skip-permissions flag, got %q", command)
+	}
+	if !strings.Contains(command, "\"skipDangerousModePermissionPrompt\":true") {
+		t.Fatalf("expected bypass prompt config, got %q", command)
+	}
+	if !strings.Contains(command, "\"IS_SANDBOX\":\"1\"") {
+		t.Fatalf("expected sandbox marker in config env, got %q", command)
 	}
 }
 
@@ -1012,14 +1037,14 @@ func TestBuildOpenClaudePTYGlobalConfigApprovesAnthropicAPIKey(t *testing.T) {
 		"ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
 		"ANTHROPIC_MODEL":    "deepseek-v4-pro[1m]",
 		"CLAUDE_CONFIG_DIR":  "/root/.openclaude",
-	})
+	}, false)
 
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
 		t.Fatalf("unmarshal config: %v", err)
 	}
-	if got := decoded["primaryApiKey"]; got != apiKey {
-		t.Fatalf("expected primaryApiKey %q, got %#v", apiKey, got)
+	if _, ok := decoded["primaryApiKey"]; ok {
+		t.Fatalf("expected primaryApiKey to be omitted for env auth, got %#v", decoded["primaryApiKey"])
 	}
 
 	custom, ok := decoded["customApiKeyResponses"].(map[string]any)

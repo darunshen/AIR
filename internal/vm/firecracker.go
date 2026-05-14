@@ -19,6 +19,7 @@ import (
 	"unicode"
 
 	"github.com/darunshen/AIR/internal/guestapi"
+	"golang.org/x/sys/unix"
 )
 
 type firecrackerRuntime struct {
@@ -117,6 +118,7 @@ func (r *firecrackerRuntime) Start(sessionID string) (string, error) {
 }
 
 func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOptions) (string, error) {
+	startedAt := time.Now()
 	if err := r.preflight(); err != nil {
 		return "", err
 	}
@@ -147,36 +149,6 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 	_ = os.Remove(paths.networkConfigPath)
 	_ = os.Remove(paths.networkGuestConfigPath)
 
-	if err := copyFile(paths.rootfsPath, r.rootfsImage); err != nil {
-		return "", fmt.Errorf("prepare firecracker session rootfs: %w", err)
-	}
-	if opts.StorageMiB > 0 {
-		if err := expandExt4Image(paths.rootfsPath, int64(opts.StorageMiB)*1024*1024); err != nil {
-			return "", fmt.Errorf("expand firecracker session rootfs: %w", err)
-		}
-	}
-	if opts.WorkspacePath != "" {
-		if err := buildWorkspaceImage(paths.workspacePath, opts.WorkspacePath); err != nil {
-			return "", fmt.Errorf("prepare firecracker workspace image: %w", err)
-		}
-		upperSize := int64(defaultWorkspaceUpperSize)
-		if opts.StorageMiB > 0 {
-			upperSize = int64(opts.StorageMiB) * 1024 * 1024
-		}
-		if err := createEmptyExt4(paths.workspaceUpperPath, upperSize, 65536); err != nil {
-			return "", fmt.Errorf("prepare firecracker workspace upper image: %w", err)
-		}
-	}
-
-	consoleFile, err := os.OpenFile(paths.consolePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return "", err
-	}
-	defer consoleFile.Close()
-
-	if err := touchFile(paths.metricsPath); err != nil {
-		return "", err
-	}
 	if err := touchFile(paths.eventsPath); err != nil {
 		return "", err
 	}
@@ -188,6 +160,64 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 		"network":          networkMode,
 	})
 
+	stepStartedAt := time.Now()
+	if err := copyFile(paths.rootfsPath, r.rootfsImage); err != nil {
+		return "", fmt.Errorf("prepare firecracker session rootfs: %w", err)
+	}
+	logFirecrackerStartupStep(paths.eventsPath, sessionID, "rootfs prepared", stepStartedAt, map[string]any{
+		"source": r.rootfsImage,
+		"target": paths.rootfsPath,
+	})
+	if opts.StorageMiB > 0 {
+		stepStartedAt = time.Now()
+		if err := expandExt4Image(paths.rootfsPath, int64(opts.StorageMiB)*1024*1024); err != nil {
+			return "", fmt.Errorf("expand firecracker session rootfs: %w", err)
+		}
+		logFirecrackerStartupStep(paths.eventsPath, sessionID, "rootfs expanded", stepStartedAt, map[string]any{
+			"storage_mib": opts.StorageMiB,
+		})
+	}
+	if opts.WorkspacePath != "" {
+		stepStartedAt = time.Now()
+		cached := false
+		var err error
+		if opts.WorkspaceCache {
+			cached, err = buildCachedWorkspaceImage(paths.workspacePath, opts.WorkspacePath, filepath.Join(r.root, "workspace-cache"))
+		} else {
+			err = buildWorkspaceImage(paths.workspacePath, opts.WorkspacePath)
+		}
+		if err != nil {
+			return "", fmt.Errorf("prepare firecracker workspace image: %w", err)
+		}
+		logFirecrackerStartupStep(paths.eventsPath, sessionID, "workspace image prepared", stepStartedAt, map[string]any{
+			"workspace_path": opts.WorkspacePath,
+			"cache_enabled":  opts.WorkspaceCache,
+			"cache_hit":      cached,
+		})
+		upperSize := int64(defaultWorkspaceUpperSize)
+		if opts.StorageMiB > 0 {
+			upperSize = int64(opts.StorageMiB) * 1024 * 1024
+		}
+		stepStartedAt = time.Now()
+		if err := createEmptyExt4(paths.workspaceUpperPath, upperSize, 65536); err != nil {
+			return "", fmt.Errorf("prepare firecracker workspace upper image: %w", err)
+		}
+		logFirecrackerStartupStep(paths.eventsPath, sessionID, "workspace upper prepared", stepStartedAt, map[string]any{
+			"size_bytes": upperSize,
+		})
+	}
+
+	consoleFile, err := os.OpenFile(paths.consolePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return "", err
+	}
+	defer consoleFile.Close()
+
+	if err := touchFile(paths.metricsPath); err != nil {
+		return "", err
+	}
+
+	stepStartedAt = time.Now()
 	networkCfg := firecrackerNetworkConfig{Mode: networkMode}
 	if networkMode == firecrackerNetworkFull {
 		networkCfg = guestStaticNetworkConfig(sessionID)
@@ -212,7 +242,11 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 			return "", err
 		}
 	}
+	logFirecrackerStartupStep(paths.eventsPath, sessionID, "host network prepared", stepStartedAt, map[string]any{
+		"network": networkMode,
+	})
 
+	stepStartedAt = time.Now()
 	payloads := r.payloads(sessionID, paths, networkCfg)
 	if err := r.writeConfigSnapshot(paths, payloads); err != nil {
 		if networkMode == firecrackerNetworkFull {
@@ -220,7 +254,9 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 		}
 		return "", err
 	}
+	logFirecrackerStartupStep(paths.eventsPath, sessionID, "config written", stepStartedAt, nil)
 
+	stepStartedAt = time.Now()
 	cmd := exec.Command(r.binary, "--api-sock", paths.socketPath)
 	cmd.Stdout = consoleFile
 	cmd.Stderr = consoleFile
@@ -236,6 +272,9 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 		return "", err
 	}
 	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "firecracker_started", map[string]any{
+		"pid": cmd.Process.Pid,
+	})
+	logFirecrackerStartupStep(paths.eventsPath, sessionID, "process started", stepStartedAt, map[string]any{
 		"pid": cmd.Process.Pid,
 	})
 
@@ -263,7 +302,9 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 		}
 		return "", err
 	}
+	logFirecrackerStartupStep(paths.eventsPath, sessionID, "api socket ready", stepStartedAt, nil)
 
+	stepStartedAt = time.Now()
 	newUnixClientFn := r.newUnixClientFn
 	if newUnixClientFn == nil {
 		newUnixClientFn = r.newUnixClient
@@ -342,7 +383,9 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 		}
 		return "", fmt.Errorf("start firecracker instance: %w", err)
 	}
+	logFirecrackerStartupStep(paths.eventsPath, sessionID, "vm configured", stepStartedAt, nil)
 
+	stepStartedAt = time.Now()
 	if err := r.waitForGuestReady(sessionID, paths); err != nil {
 		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "guest_ready_failed", map[string]any{
 			"error": err.Error(),
@@ -356,8 +399,10 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "guest_ready", map[string]any{
 		"vsock_path": paths.vsockPath,
 	})
+	logFirecrackerStartupStep(paths.eventsPath, sessionID, "guest agent ready", stepStartedAt, nil)
 
 	if networkMode == firecrackerNetworkFull {
+		stepStartedAt = time.Now()
 		if err := r.configureGuestNetwork(sessionID, networkCfg); err != nil {
 			_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "guest_network_failed", map[string]any{
 				"error": err.Error(),
@@ -372,8 +417,12 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 			"guest_ip":   networkCfg.GuestIP,
 			"gateway_ip": networkCfg.GatewayIP,
 		})
+		logFirecrackerStartupStep(paths.eventsPath, sessionID, "guest network ready", stepStartedAt, map[string]any{
+			"network": networkMode,
+		})
 	}
 
+	stepStartedAt = time.Now()
 	if err := r.startEgressProxy(sessionID, paths); err != nil {
 		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "egress_proxy_failed", map[string]any{
 			"error": err.Error(),
@@ -384,6 +433,10 @@ func (r *firecrackerRuntime) StartWithOptions(sessionID string, opts StartOption
 		}
 		return "", err
 	}
+	logFirecrackerStartupStep(paths.eventsPath, sessionID, "egress proxy ready", stepStartedAt, nil)
+	logFirecrackerStartupStep(paths.eventsPath, sessionID, "session ready", startedAt, map[string]any{
+		"network": networkMode,
+	})
 
 	return sessionID, nil
 }
@@ -699,6 +752,9 @@ func (r *firecrackerRuntime) Stop(vmid string) error {
 
 	pidRaw, err := os.ReadFile(paths.pidPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return os.RemoveAll(paths.base)
+		}
 		return fmt.Errorf("read firecracker pid: %w", err)
 	}
 
@@ -1140,6 +1196,17 @@ func touchFile(path string) error {
 	return file.Close()
 }
 
+func logFirecrackerStartupStep(eventsPath, sessionID, step string, startedAt time.Time, fields map[string]any) {
+	duration := time.Since(startedAt)
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["step"] = step
+	fields["duration_ms"] = duration.Milliseconds()
+	_ = appendRuntimeEvent(eventsPath, "firecracker", sessionID, "startup_step_completed", fields)
+	fmt.Fprintf(os.Stderr, "air: firecracker %s in %s\n", step, duration.Round(time.Millisecond))
+}
+
 func writeJSONFile(path string, payload any) error {
 	body, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
@@ -1167,10 +1234,65 @@ func copyFile(dst, src string) error {
 	}
 	defer target.Close()
 
-	if _, err := io.Copy(target, source); err != nil {
+	if err := unix.IoctlFileClone(int(target.Fd()), int(source.Fd())); err == nil {
+		return target.Sync()
+	}
+
+	if err := copyFileSparse(target, source, info.Size()); err != nil {
 		return err
 	}
 	return target.Sync()
+}
+
+func copyFileSparse(target *os.File, source *os.File, size int64) error {
+	if size == 0 {
+		return nil
+	}
+	offset := int64(0)
+	for offset < size {
+		dataOffset, err := unix.Seek(int(source.Fd()), offset, unix.SEEK_DATA)
+		if err != nil {
+			if err == unix.ENXIO {
+				return target.Truncate(size)
+			}
+			if err == unix.EINVAL {
+				_, copyErr := source.Seek(0, io.SeekStart)
+				if copyErr != nil {
+					return copyErr
+				}
+				_, copyErr = io.Copy(target, source)
+				return copyErr
+			}
+			return err
+		}
+		if dataOffset > offset {
+			if err := target.Truncate(dataOffset); err != nil {
+				return err
+			}
+		}
+		holeOffset, err := unix.Seek(int(source.Fd()), dataOffset, unix.SEEK_HOLE)
+		if err != nil {
+			if err == unix.ENXIO {
+				holeOffset = size
+			} else {
+				return err
+			}
+		}
+		if holeOffset > size {
+			holeOffset = size
+		}
+		if _, err := source.Seek(dataOffset, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err := target.Seek(dataOffset, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err := io.CopyN(target, source, holeOffset-dataOffset); err != nil {
+			return err
+		}
+		offset = holeOffset
+	}
+	return target.Truncate(size)
 }
 
 func (r *firecrackerRuntime) waitForGuestReady(sessionID string, paths firecrackerPaths) error {

@@ -21,9 +21,10 @@ type TCPDialer interface {
 }
 
 type StartOptions struct {
-	WorkspacePath string
-	Network       string
-	StorageMiB    int
+	WorkspacePath  string
+	WorkspaceCache bool
+	Network        string
+	StorageMiB     int
 }
 
 type ExecResult struct {
