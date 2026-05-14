@@ -137,6 +137,37 @@ func TestParseSessionExecFlagsRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestParseSessionPTYFlags(t *testing.T) {
+	t.Helper()
+
+	opts, err := parseSessionPTYFlags([]string{"sess_123", "bash -lc 'tty'"})
+	if err != nil {
+		t.Fatalf("parse session pty flags: %v", err)
+	}
+	if opts.SessionID != "sess_123" {
+		t.Fatalf("unexpected session id: %q", opts.SessionID)
+	}
+	if opts.Command != "bash -lc 'tty'" {
+		t.Fatalf("unexpected command: %q", opts.Command)
+	}
+}
+
+func TestParseSessionPTYFlagsRejectsInvalidInput(t *testing.T) {
+	t.Helper()
+
+	for _, args := range [][]string{
+		nil,
+		{"sess_123"},
+		{"", "bash"},
+		{"sess_123", ""},
+		{"sess_123", "bash", "extra"},
+	} {
+		if _, err := parseSessionPTYFlags(args); err == nil {
+			t.Fatalf("expected error for args=%v", args)
+		}
+	}
+}
+
 func TestParseSessionGCFlags(t *testing.T) {
 	t.Helper()
 
@@ -328,6 +359,18 @@ func TestParseChatFlagsSupportsReconfigure(t *testing.T) {
 	}
 	if opts.ListenAddress != "127.0.0.1:50060" {
 		t.Fatalf("unexpected listen address: %q", opts.ListenAddress)
+	}
+}
+
+func TestParseChatFlagsSupportsPTY(t *testing.T) {
+	t.Helper()
+
+	opts, err := parseChatFlags([]string{"--pty"})
+	if err != nil {
+		t.Fatalf("parse chat flags: %v", err)
+	}
+	if !opts.PTY {
+		t.Fatal("expected pty=true")
 	}
 }
 
@@ -794,5 +837,98 @@ func TestOpenClaudeChatScriptDefaultsToAutoApproveAll(t *testing.T) {
 	}
 	if !strings.Contains(openClaudeChatScript, "auto: y") {
 		t.Fatalf("expected chat script to print auto-approve marker")
+	}
+}
+
+func TestRenderOpenClaudePTYCommandUsesNativeCLI(t *testing.T) {
+	t.Helper()
+
+	command := renderOpenClaudePTYCommand("/opt/open claude")
+	if !strings.Contains(command, "cd '/opt/open claude'") {
+		t.Fatalf("expected shell-quoted repo path, got %q", command)
+	}
+	if !strings.Contains(command, "exec /usr/local/bin/bun ./dist/cli.mjs") {
+		t.Fatalf("expected bun dist startup, got %q", command)
+	}
+	if !strings.Contains(command, "exec /usr/bin/node ./dist/cli.mjs") {
+		t.Fatalf("expected node dist fallback, got %q", command)
+	}
+	if !strings.Contains(command, "exec /usr/local/bin/bun ./dist/cli.mjs") {
+		t.Fatalf("expected absolute bun dist startup, got %q", command)
+	}
+	if !strings.Contains(command, "dist/cli.mjs missing in guest image") {
+		t.Fatalf("expected missing dist error, got %q", command)
+	}
+	if strings.Contains(command, "src/entrypoints/cli.tsx") {
+		t.Fatalf("expected PTY launcher to avoid source entrypoint fallback, got %q", command)
+	}
+}
+
+func TestCollectOpenClaudePTYEnvAllowsOnlyRuntimeEnv(t *testing.T) {
+	t.Helper()
+
+	env := collectOpenClaudePTYEnv([]string{
+		"OPENAI_API_KEY=sk-test",
+		"PATH=/broken/host/path",
+		"HOME=/home/bigrain",
+		"SHELL=/bin/bash",
+		"SECRET_TOKEN=hidden",
+		"EMPTY=",
+	})
+	if env["OPENAI_API_KEY"] != "sk-test" {
+		t.Fatalf("expected openai api key to be forwarded")
+	}
+	if env["PATH"] != "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" {
+		t.Fatalf("expected guest path fallback, got %+v", env)
+	}
+	if env["HOME"] != "/root" {
+		t.Fatalf("expected guest home fallback, got %+v", env)
+	}
+	if env["SHELL"] != "/bin/sh" {
+		t.Fatalf("expected guest shell fallback, got %+v", env)
+	}
+	if _, ok := env["SECRET_TOKEN"]; ok {
+		t.Fatalf("unexpected secret forwarded: %+v", env)
+	}
+	if _, ok := env["EMPTY"]; ok {
+		t.Fatalf("unexpected empty env forwarded: %+v", env)
+	}
+}
+
+func TestCollectOpenClaudePTYEnvFallsBackToSavedProfile(t *testing.T) {
+	t.Helper()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := saveChatProfile(&chatProfile{
+		ProviderMode:       "anthropic",
+		AnthropicBaseURL:   "https://api.deepseek.com/anthropic",
+		AnthropicModel:     "deepseek-v4-pro[1m]",
+		AnthropicAuthToken: "sk-anthropic",
+	}); err != nil {
+		t.Fatalf("save chat profile: %v", err)
+	}
+
+	env := collectOpenClaudePTYEnv([]string{
+		"PATH=/usr/local/bin:/usr/bin",
+		"HOME=/home/bigrain",
+	})
+	if env["ANTHROPIC_BASE_URL"] != "https://api.deepseek.com/anthropic" {
+		t.Fatalf("unexpected anthropic base url: %+v", env)
+	}
+	if env["ANTHROPIC_MODEL"] != "deepseek-v4-pro[1m]" {
+		t.Fatalf("unexpected anthropic model: %+v", env)
+	}
+	if env["ANTHROPIC_AUTH_TOKEN"] != "sk-anthropic" {
+		t.Fatalf("unexpected anthropic auth token: %+v", env)
+	}
+	if env["TERM"] != "xterm-256color" {
+		t.Fatalf("expected default TERM, got %+v", env)
+	}
+	if env["HOME"] != "/root" {
+		t.Fatalf("expected guest HOME, got %+v", env)
+	}
+	if env["PATH"] != "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" {
+		t.Fatalf("expected guest PATH, got %+v", env)
 	}
 }

@@ -265,6 +265,12 @@
   - 这是明显的体验断层
   - 需要拆分 privileged network helper 与普通 session control
 
+- 需要新增免 sudo 的用户态网络模式
+  - 大概率采用类似 gVisor netstack 的用户态 TCP/IP 技术，作为 `--network user` 或等价模式
+  - 目标是让普通用户运行 Firecracker/OpenClaude 时不需要创建 TAP、不改 `iptables`、不写 `/proc/sys/net/ipv4/ip_forward`
+  - host 侧以普通用户进程承接 guest 出网流量，优先满足 OpenClaude 所需的 HTTP(S) / CONNECT 出网
+  - `--network full` 继续保留为需要完整 TCP/IP 行为的高权限模式
+
 ## Priority Rule
 
 - 优先级判断标准调整为：先打通 AI agent 真实工作流，再补底层工程化

@@ -583,6 +583,112 @@ func (r *firecrackerRuntime) ExecStreaming(sessionID, command string, timeout ti
 	}
 }
 
+func (r *firecrackerRuntime) AttachPTY(sessionID string, opts PTYOptions) error {
+	paths := r.paths(sessionID)
+	requestID := fmt.Sprintf("%s-pty-%d", sessionID, time.Now().UnixNano())
+	command := opts.Command
+	if command == "" {
+		return errors.New("pty command must not be empty")
+	}
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "pty_started", map[string]any{
+		"request_id": requestID,
+		"command":    command,
+		"rows":       opts.Rows,
+		"cols":       opts.Cols,
+	})
+
+	dialVSockFn := r.dialVSockFn
+	if dialVSockFn == nil {
+		dialVSockFn = dialFirecrackerVSock
+	}
+	conn, err := dialVSockFn(paths.vsockPath, guestapi.DefaultVSockPort, 5*time.Second)
+	if err != nil {
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "pty_failed", map[string]any{
+			"request_id": requestID,
+			"command":    command,
+			"error":      err.Error(),
+		})
+		return errGuestAgentTransport(sessionID, paths.vsockPath, err)
+	}
+	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+	req := guestapi.ExecRequest{
+		Type:      guestapi.MessageTypePTY,
+		RequestID: requestID,
+		Command:   command,
+		Rows:      opts.Rows,
+		Cols:      opts.Cols,
+		Env:       opts.Env,
+	}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return err
+	}
+
+	reader := bufio.NewReader(conn)
+	decoder := json.NewDecoder(reader)
+	var result guestapi.PTYResult
+	if err := decoder.Decode(&result); err != nil {
+		return err
+	}
+	if result.Type != guestapi.MessageTypePTY {
+		return fmt.Errorf("unexpected pty response type: %s", result.Type)
+	}
+	if result.Status != "connected" {
+		if result.Error != "" {
+			return errors.New(result.Error)
+		}
+		return fmt.Errorf("unexpected pty status: %s", result.Status)
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		return err
+	}
+
+	streamReader := streamAfterJSONDecodeRaw(decoder, reader)
+	done := make(chan error, 2)
+	streams := 0
+	if opts.Stdin != nil {
+		streams++
+		go func() {
+			_, err := io.Copy(conn, opts.Stdin)
+			done <- err
+		}()
+	}
+	if opts.Stdout != nil {
+		streams++
+		go func() {
+			_, err := io.Copy(opts.Stdout, streamReader)
+			done <- err
+		}()
+	}
+	if streams == 0 {
+		_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "pty_completed", map[string]any{
+			"request_id": requestID,
+			"command":    command,
+		})
+		return nil
+	}
+
+	err = <-done
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || isClosedPipeError(err) {
+		err = nil
+	}
+	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", sessionID, "pty_completed", map[string]any{
+		"request_id": requestID,
+		"command":    command,
+	})
+	return err
+}
+
+func isClosedPipeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "read/write on closed pipe")
+}
+
 func (r *firecrackerRuntime) Stop(vmid string) error {
 	paths := r.paths(vmid)
 	_ = appendRuntimeEvent(paths.eventsPath, "firecracker", vmid, "session_stopping", nil)
@@ -1204,6 +1310,13 @@ func streamAfterJSONDecode(decoder *json.Decoder, reader io.Reader) io.Reader {
 		reader:   streamReader,
 		trimming: true,
 	}
+}
+
+func streamAfterJSONDecodeRaw(decoder *json.Decoder, reader io.Reader) io.Reader {
+	if buffered := decoder.Buffered(); buffered != nil {
+		return io.MultiReader(buffered, reader)
+	}
+	return reader
 }
 
 type leadingWhitespaceTrimmingReader struct {

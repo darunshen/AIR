@@ -73,6 +73,12 @@ set -eu
 mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+if [ ! -e /dev/ptmx ]; then
+  ln -s pts/ptmx /dev/ptmx 2>/dev/null || true
+fi
+chmod 666 /dev/ptmx /dev/pts/ptmx 2>/dev/null || true
 mount -t tmpfs tmpfs /run 2>/dev/null || true
 mount -t tmpfs tmpfs /tmp 2>/dev/null || true
 mkdir -p /var/log /mnt/workspace-ro /mnt/workspace-rw /workspace

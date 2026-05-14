@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/creack/pty"
 	"github.com/darunshen/AIR/internal/guestapi"
 )
 
@@ -96,6 +97,10 @@ func (s *Server) handleStream(ctx context.Context, rw io.ReadWriter) error {
 		streamReader := streamAfterJSONDecode(decoder, reader)
 		return s.handleProxyStream(streamReader, rw, encoder, req)
 	}
+	if req.Type == guestapi.MessageTypePTY {
+		streamReader := streamAfterJSONDecodeRaw(decoder, reader)
+		return s.handlePTYStream(ctx, streamReader, rw, encoder, req)
+	}
 
 	if req.Type != guestapi.MessageTypeExec {
 		result.Error = fmt.Sprintf("unsupported request type: %s", req.Type)
@@ -146,6 +151,157 @@ func (s *Server) handleStream(ctx context.Context, rw io.ReadWriter) error {
 	execResult.Type = guestapi.MessageTypeResult
 	execResult.RequestID = req.RequestID
 	return encoder.Encode(execResult)
+}
+
+func (s *Server) handlePTYStream(ctx context.Context, reader io.Reader, rw io.ReadWriter, encoder *json.Encoder, req guestapi.ExecRequest) error {
+	if req.Command == "" {
+		return encoder.Encode(guestapi.PTYResult{
+			Type:      guestapi.MessageTypePTY,
+			RequestID: req.RequestID,
+			Status:    "error",
+			Error:     "command must not be empty",
+		})
+	}
+	if err := ensurePTYDevice(); err != nil {
+		return encoder.Encode(guestapi.PTYResult{
+			Type:      guestapi.MessageTypePTY,
+			RequestID: req.RequestID,
+			Status:    "error",
+			Error:     err.Error(),
+		})
+	}
+	rows := req.Rows
+	if rows == 0 {
+		rows = 24
+	}
+	cols := req.Cols
+	if cols == 0 {
+		cols = 80
+	}
+
+	shellPath, shellFlag := resolveShell()
+	cmd := exec.CommandContext(ctx, shellPath, shellFlag, req.Command)
+	cmd.Env = withRequestEnv(withDefaultPATH(os.Environ()), req.Env)
+	if info, err := os.Stat("/workspace"); err == nil && info.IsDir() {
+		cmd.Dir = "/workspace"
+	}
+
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
+	if err != nil {
+		return encoder.Encode(guestapi.PTYResult{
+			Type:      guestapi.MessageTypePTY,
+			RequestID: req.RequestID,
+			Status:    "error",
+			Error:     err.Error(),
+		})
+	}
+	defer ptmx.Close()
+
+	if err := encoder.Encode(guestapi.PTYResult{
+		Type:      guestapi.MessageTypePTY,
+		RequestID: req.RequestID,
+		Status:    "connected",
+	}); err != nil {
+		_ = cmd.Process.Kill()
+		return err
+	}
+
+	done := make(chan error, 2)
+	waitDone := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(ptmx, reader)
+		done <- err
+	}()
+	go func() {
+		_, err := io.Copy(rw, ptmx)
+		done <- err
+	}()
+	go func() {
+		waitDone <- cmd.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+	case <-done:
+	case <-waitDone:
+	}
+
+	if cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	_ = ptmx.Close()
+	select {
+	case <-done:
+	default:
+	}
+	return nil
+}
+
+func resolveShell() (string, string) {
+	if shellWorks("/bin/bash", "-lc") {
+		return "/bin/bash", "-lc"
+	}
+	if shellWorks("/usr/bin/bash", "-lc") {
+		return "/usr/bin/bash", "-lc"
+	}
+	if shellWorks("/bin/sh", "-lc") {
+		return "/bin/sh", "-lc"
+	}
+	return "sh", "-lc"
+}
+
+func shellWorks(path, flag string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if info.Mode()&0o111 == 0 {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, path, flag, ":").Run() == nil
+}
+
+func ensurePTYDevice() error {
+	if _, err := os.Stat("/dev/ptmx"); err == nil {
+		return nil
+	}
+	_ = os.MkdirAll("/dev/pts", 0o755)
+	_ = exec.Command("mount", "-t", "devpts", "devpts", "/dev/pts").Run()
+	if _, err := os.Lstat("/dev/ptmx"); os.IsNotExist(err) {
+		_ = os.Symlink("pts/ptmx", "/dev/ptmx")
+	}
+	_ = os.Chmod("/dev/ptmx", 0o666)
+	_ = os.Chmod("/dev/pts/ptmx", 0o666)
+	if _, err := os.Stat("/dev/ptmx"); err != nil {
+		return fmt.Errorf("prepare pty device: %w", err)
+	}
+	return nil
+}
+
+func withRequestEnv(env []string, extra map[string]string) []string {
+	if len(extra) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env)+len(extra))
+	seen := make(map[string]struct{}, len(extra))
+	for key := range extra {
+		seen[key] = struct{}{}
+	}
+	for _, item := range env {
+		key, _, ok := strings.Cut(item, "=")
+		if ok {
+			if _, replace := seen[key]; replace {
+				continue
+			}
+		}
+		out = append(out, item)
+	}
+	for key, value := range extra {
+		out = append(out, key+"="+value)
+	}
+	return out
 }
 
 func defaultExecStream(ctx context.Context, command string, emit func(guestapi.ExecChunk) error) (*guestapi.ExecResult, error) {
@@ -406,6 +562,13 @@ func streamAfterJSONDecode(decoder *json.Decoder, reader io.Reader) io.Reader {
 		reader:   streamReader,
 		trimming: true,
 	}
+}
+
+func streamAfterJSONDecodeRaw(decoder *json.Decoder, reader io.Reader) io.Reader {
+	if buffered := decoder.Buffered(); buffered != nil {
+		return io.MultiReader(buffered, reader)
+	}
+	return reader
 }
 
 type leadingWhitespaceTrimmingReader struct {

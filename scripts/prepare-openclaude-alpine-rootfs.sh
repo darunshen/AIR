@@ -43,7 +43,7 @@ BUN_BIN="${4:-}"
 DEFAULT_PORT=10789
 DEFAULT_PROXY_LISTEN="127.0.0.1:18080"
 DEFAULT_PROXY_VSOCK_PORT=18080
-ALPINE_RUNTIME_PACKAGES="libgcc libstdc++ bash"
+ALPINE_RUNTIME_PACKAGES="libgcc libstdc++ ncurses-terminfo-base readline libhistory bash"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -139,6 +139,40 @@ is_musl_bun() {
     return 0
   fi
   readelf -l "${bun_path}" 2>/dev/null | grep -q "/ld-musl-"
+}
+
+resolve_build_bun() {
+  if command -v bun >/dev/null 2>&1; then
+    command -v bun
+    return 0
+  fi
+  if [[ -n "${BUN_BIN:-}" && -x "${BUN_BIN}" ]]; then
+    printf '%s\n' "${BUN_BIN}"
+    return 0
+  fi
+  echo "bun is required on the host to build OpenClaude dist/cli.mjs" >&2
+  exit 1
+}
+
+prepare_openclaude_tree() {
+  local source_repo="$1"
+  local output_dir="$2"
+  local build_bun="$3"
+
+  echo "Preparing OpenClaude runtime tree..."
+  cp -a "${source_repo}" "${output_dir}"
+  rm -rf "${output_dir}/.git" "${output_dir}/.air"
+  find "${output_dir}" -name '.DS_Store' -delete
+
+  (
+    cd "${output_dir}"
+    "${build_bun}" run build
+  )
+
+  if [[ ! -f "${output_dir}/dist/cli.mjs" ]]; then
+    echo "openclaude build did not produce dist/cli.mjs: ${output_dir}" >&2
+    exit 1
+  fi
 }
 
 require_cmd awk
@@ -249,6 +283,10 @@ if [[ -z "${BUN_BIN}" || ! -x "${BUN_BIN}" ]]; then
   exit 1
 fi
 
+BUILD_BUN="$(resolve_build_bun)"
+PREPARED_OPENCLAUDE="${tmpdir}/openclaude"
+prepare_openclaude_tree "${OPENCLAUDE_REPO}" "${PREPARED_OPENCLAUDE}" "${BUILD_BUN}"
+
 stage_root="${tmpdir}/rootfs"
 mkdir -p "${stage_root}"
 
@@ -267,6 +305,12 @@ mkdir -p /proc /sys /dev /run /tmp /var/log
 mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+if [ ! -e /dev/ptmx ]; then
+  ln -s pts/ptmx /dev/ptmx 2>/dev/null || true
+fi
+chmod 666 /dev/ptmx /dev/pts/ptmx 2>/dev/null || true
 mount -t tmpfs tmpfs /run 2>/dev/null || true
 mount -t tmpfs tmpfs /tmp 2>/dev/null || true
 mount -t tmpfs tmpfs /var/log 2>/dev/null || true
@@ -322,7 +366,7 @@ tar -xzf "${ALPINE_MINIROOTFS}" -C "${stage_root}"
 
 echo "Injecting AIR guest agent and OpenClaude runtime..."
 mkdir -p "${stage_root}/opt" "${stage_root}/usr/local/bin" "${stage_root}/var/log" "${stage_root}/run" "${stage_root}/mnt/workspace-ro" "${stage_root}/mnt/workspace-rw" "${stage_root}/workspace"
-cp -a "${OPENCLAUDE_REPO}" "${stage_root}/opt/openclaude"
+cp -a "${PREPARED_OPENCLAUDE}" "${stage_root}/opt/openclaude"
 rm -rf "${stage_root}/opt/openclaude/.git" "${stage_root}/opt/openclaude/.air"
 find "${stage_root}/opt/openclaude" -name '.DS_Store' -delete
 

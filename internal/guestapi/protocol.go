@@ -3,6 +3,8 @@ package guestapi
 const (
 	MessageTypeExec   = "exec"
 	MessageTypeChunk  = "exec_chunk"
+	MessageTypePTY    = "pty"
+	MessageTypeResize = "pty_resize"
 	MessageTypeProxy  = "proxy"
 	MessageTypeResult = "result"
 	MessageTypeReady  = "ready"
@@ -10,13 +12,16 @@ const (
 )
 
 type ExecRequest struct {
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-	Command   string `json:"command"`
-	Timeout   int    `json:"timeout"`
-	Stream    bool   `json:"stream,omitempty"`
-	Network   string `json:"network,omitempty"`
-	Address   string `json:"address,omitempty"`
+	Type      string            `json:"type"`
+	RequestID string            `json:"request_id"`
+	Command   string            `json:"command"`
+	Timeout   int               `json:"timeout"`
+	Stream    bool              `json:"stream,omitempty"`
+	Network   string            `json:"network,omitempty"`
+	Address   string            `json:"address,omitempty"`
+	Rows      uint16            `json:"rows,omitempty"`
+	Cols      uint16            `json:"cols,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
 }
 
 type ExecChunk struct {
@@ -44,6 +49,13 @@ type ExecResult struct {
 }
 
 type ProxyResult struct {
+	Type      string `json:"type"`
+	RequestID string `json:"request_id"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+type PTYResult struct {
 	Type      string `json:"type"`
 	RequestID string `json:"request_id"`
 	Status    string `json:"status"`

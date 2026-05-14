@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -226,6 +227,143 @@ func TestServerReady(t *testing.T) {
 	}
 	if result.Status != "ready" {
 		t.Fatalf("unexpected ready status: %s", result.Status)
+	}
+}
+
+func TestServerPTY(t *testing.T) {
+	t.Helper()
+
+	if _, err := os.Stat("/bin/bash"); err != nil {
+		t.Skip("pty test requires /bin/bash")
+	}
+
+	server := &Server{execFn: defaultExec}
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+
+	go func() {
+		_ = server.handleStream(context.Background(), serverConn)
+	}()
+
+	if err := json.NewEncoder(clientConn).Encode(guestapi.ExecRequest{
+		Type:      guestapi.MessageTypePTY,
+		RequestID: "pty_1",
+		Command:   "printf ' ready'",
+		Rows:      30,
+		Cols:      100,
+	}); err != nil {
+		t.Fatalf("encode pty request: %v", err)
+	}
+
+	var result guestapi.PTYResult
+	if err := json.NewDecoder(clientConn).Decode(&result); err != nil {
+		t.Fatalf("decode pty response: %v", err)
+	}
+	if result.Type != guestapi.MessageTypePTY {
+		t.Fatalf("unexpected response type: %s", result.Type)
+	}
+	if result.Status != "connected" {
+		t.Fatalf("unexpected pty status: %+v", result)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var output strings.Builder
+	buf := make([]byte, 16)
+	for time.Now().Before(deadline) {
+		_ = clientConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		n, err := clientConn.Read(buf)
+		if n > 0 {
+			output.Write(buf[:n])
+			if strings.Contains(output.String(), " ready") {
+				return
+			}
+		}
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			t.Fatalf("read pty output: %v", err)
+		}
+	}
+	t.Fatalf("unexpected pty output: %q", output.String())
+}
+
+func TestServerPTYReturnsAfterCommandExit(t *testing.T) {
+	t.Helper()
+
+	if _, err := os.Stat("/bin/bash"); err != nil {
+		t.Skip("pty test requires /bin/bash")
+	}
+
+	server := &Server{execFn: defaultExec}
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer serverConn.Close()
+		_ = server.handleStream(context.Background(), serverConn)
+	}()
+
+	if err := json.NewEncoder(clientConn).Encode(guestapi.ExecRequest{
+		Type:      guestapi.MessageTypePTY,
+		RequestID: "pty_exit",
+		Command:   "printf 'done'",
+		Rows:      24,
+		Cols:      80,
+	}); err != nil {
+		t.Fatalf("encode pty request: %v", err)
+	}
+
+	var result guestapi.PTYResult
+	if err := json.NewDecoder(clientConn).Decode(&result); err != nil {
+		t.Fatalf("decode pty response: %v", err)
+	}
+	if result.Status != "connected" {
+		t.Fatalf("unexpected pty status: %+v", result)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var output strings.Builder
+	buf := make([]byte, 16)
+	for time.Now().Before(deadline) {
+		_ = clientConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		n, err := clientConn.Read(buf)
+		if n > 0 {
+			output.Write(buf[:n])
+			if strings.Contains(output.String(), "done") {
+				break
+			}
+		}
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			t.Fatalf("read pty output: %v", err)
+		}
+	}
+	if !strings.Contains(output.String(), "done") {
+		t.Fatalf("unexpected pty output: %q", output.String())
+	}
+
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pty stream did not exit after command completion")
+	}
+}
+
+func TestResolveShellFallsBackToSh(t *testing.T) {
+	t.Helper()
+
+	shellPath, shellFlag := resolveShell()
+	if shellPath == "" || shellFlag == "" {
+		t.Fatalf("expected shell path and flag, got %q %q", shellPath, shellFlag)
+	}
+	if err := exec.Command(shellPath, shellFlag, ":").Run(); err != nil {
+		t.Fatalf("resolved shell does not work: %v", err)
 	}
 }
 

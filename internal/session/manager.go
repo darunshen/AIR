@@ -222,6 +222,39 @@ func (m *Manager) ExecStreaming(sessionID, command string, timeout time.Duration
 	}, nil
 }
 
+func (m *Manager) AttachPTY(sessionID string, opts vm.PTYOptions) error {
+	s, err := m.store.Get(sessionID)
+	if err != nil {
+		return err
+	}
+	if err := m.ensureProvider(s); err != nil {
+		return err
+	}
+	runtime, err := m.runtimeForSession(s)
+	if err != nil {
+		return err
+	}
+	info, err := runtime.Inspect(sessionID)
+	if err != nil {
+		return err
+	}
+	if err := m.syncSessionState(s, info); err != nil {
+		return err
+	}
+	if s.Status != "running" {
+		return errors.New("session is not running")
+	}
+	ptyRuntime, ok := runtime.(vm.PTYRuntime)
+	if !ok {
+		return fmt.Errorf("provider %s does not support pty attach", s.Provider)
+	}
+	if err := ptyRuntime.AttachPTY(sessionID, opts); err != nil {
+		return err
+	}
+	s.LastUsedAt = time.Now().UTC()
+	return m.store.Save(s)
+}
+
 func (m *Manager) ExecWithTimeout(sessionID, command string, timeout time.Duration) (*ExecResult, error) {
 	s, err := m.store.Get(sessionID)
 	if err != nil {

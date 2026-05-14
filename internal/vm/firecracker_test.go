@@ -2,6 +2,7 @@ package vm
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -566,6 +567,7 @@ func TestFirecrackerExecOverVSockBridge(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		defer serverConn.Close()
 
 		reader := bufio.NewReader(serverConn)
 		var req guestapi.ExecRequest
@@ -695,6 +697,99 @@ func TestFirecrackerWaitForGuestReady(t *testing.T) {
 		vsockPath: filepath.Join(root, "firecracker.vsock"),
 	}); err != nil {
 		t.Fatalf("wait for guest ready: %v", err)
+	}
+
+	<-done
+}
+
+func TestFirecrackerAttachPTY(t *testing.T) {
+	t.Helper()
+
+	root := t.TempDir()
+	rtAny, err := NewWithConfig(Config{
+		Root:     root,
+		Provider: "firecracker",
+	})
+	if err != nil {
+		t.Fatalf("new runtime: %v", err)
+	}
+
+	rt, ok := rtAny.(*firecrackerRuntime)
+	if !ok {
+		t.Fatalf("expected firecracker runtime, got %T", rtAny)
+	}
+
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	rt.dialVSockFn = func(string, uint32, time.Duration) (net.Conn, error) {
+		return clientConn, nil
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		reader := bufio.NewReader(serverConn)
+		var req guestapi.ExecRequest
+		if err := json.NewDecoder(reader).Decode(&req); err != nil {
+			t.Errorf("decode pty request: %v", err)
+			return
+		}
+		if req.Type != guestapi.MessageTypePTY {
+			t.Errorf("unexpected request type: %s", req.Type)
+			return
+		}
+		if req.Rows != 30 || req.Cols != 100 {
+			t.Errorf("unexpected pty size: %+v", req)
+			return
+		}
+		if req.Env["OPENAI_API_KEY"] != "sk-test" {
+			t.Errorf("unexpected env: %+v", req.Env)
+			return
+		}
+		var payload bytes.Buffer
+		if err := json.NewEncoder(&payload).Encode(guestapi.PTYResult{
+			Type:      guestapi.MessageTypePTY,
+			RequestID: req.RequestID,
+			Status:    "connected",
+		}); err != nil {
+			t.Errorf("encode pty connected: %v", err)
+			return
+		}
+		if _, err := payload.Write([]byte("hello")); err != nil {
+			t.Errorf("buffer pty output: %v", err)
+			return
+		}
+		if _, err := serverConn.Write(payload.Bytes()); err != nil {
+			t.Errorf("write pty output: %v", err)
+		}
+	}()
+
+	var stdout bytes.Buffer
+	if err := rt.AttachPTY("sess_pty", PTYOptions{
+		Command: "bash",
+		Env: map[string]string{
+			"OPENAI_API_KEY": "sk-test",
+		},
+		Stdin:  strings.NewReader(""),
+		Stdout: &stdout,
+		Rows:   30,
+		Cols:   100,
+	}); err != nil {
+		t.Fatalf("attach pty: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "hello") {
+		t.Fatalf("unexpected pty stdout: %q", stdout.String())
+	}
+
+	eventsBody, err := os.ReadFile(filepath.Join(root, "firecracker", "sess_pty", "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read events log: %v", err)
+	}
+	if !strings.Contains(string(eventsBody), "pty_completed") {
+		t.Fatalf("expected pty event in events log, got %s", string(eventsBody))
 	}
 
 	<-done

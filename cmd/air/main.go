@@ -26,6 +26,7 @@ import (
 	"github.com/darunshen/AIR/internal/model"
 	"github.com/darunshen/AIR/internal/session"
 	"github.com/darunshen/AIR/internal/vm"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -206,6 +207,15 @@ func main() {
 			fmt.Fprintf(os.Stderr, "request_id=%s duration_ms=%d\n", result.RequestID, result.Duration.Milliseconds())
 			if result.ExitCode != 0 {
 				os.Exit(result.ExitCode)
+			}
+		case "pty":
+			opts, err := parseSessionPTYFlags(args[2:])
+			if err != nil {
+				usage()
+				os.Exit(1)
+			}
+			if err := runSessionPTY(context.Background(), manager, opts.SessionID, opts.Command); err != nil {
+				exitErr(err)
 			}
 		case "delete":
 			if len(args) < 3 {
@@ -410,11 +420,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  air init firecracker [--source official|custom] [--dir PATH] [--yes]")
 	fmt.Fprintln(os.Stderr, "  air doctor [--provider local|firecracker] [--human]")
 	fmt.Fprintln(os.Stderr, "  air gc --all")
-	fmt.Fprintln(os.Stderr, "  air chat [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--workspace PATH] [--listen 127.0.0.1:50052] [--reconfigure]")
+	fmt.Fprintln(os.Stderr, "  air chat [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--workspace PATH] [--listen 127.0.0.1:50052] [--pty] [--reconfigure]")
 	fmt.Fprintln(os.Stderr, "  air chat gc [--dry-run] [--force]")
 	fmt.Fprintln(os.Stderr, "  air run [--provider local|firecracker] [--network none|full] [--timeout 30s] [--memory-mib 256] [--storage-mib 1024] [--vcpu-count 1] [--workspace PATH] [--human] -- <command>")
 	fmt.Fprintln(os.Stderr, "  air session create [--provider local|firecracker] [--network none|full] [--memory-mib 256] [--storage-mib 1024] [--workspace PATH]")
 	fmt.Fprintln(os.Stderr, "  air session exec <session_id> [--timeout 30s] <command>")
+	fmt.Fprintln(os.Stderr, "  air session pty <session_id> <command>")
 	fmt.Fprintln(os.Stderr, "  air session list")
 	fmt.Fprintln(os.Stderr, "  air session gc [--dry-run] [--force] [--root PATH]")
 	fmt.Fprintln(os.Stderr, "  air session inspect <id>")
@@ -496,6 +507,7 @@ type chatCLIOptions struct {
 	MemoryMiB     int
 	StorageMiB    int
 	Reconfigure   bool
+	PTY           bool
 	WorkspacePath string
 	ListenAddress string
 }
@@ -595,6 +607,8 @@ func parseChatFlags(args []string) (chatCLIOptions, error) {
 		switch {
 		case arg == "--reconfigure":
 			opts.Reconfigure = true
+		case arg == "--pty":
+			opts.PTY = true
 		case arg == "--provider":
 			if i+1 >= len(args) || args[i+1] == "" {
 				return chatCLIOptions{}, errors.New("provider must not be empty")
@@ -1064,6 +1078,9 @@ func runChatWizard(ctx context.Context, _ *session.Manager, opts chatCLIOptions)
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "air: pre-chat checks completed in %s\n", formatStepDuration(time.Since(chatStartedAt)))
+	if opts.PTY {
+		return runOpenClaudePTYOneCommand(ctx, refreshedManager, runOpts)
+	}
 	return runOpenClaudeOneCommand(ctx, refreshedManager, runOpts)
 }
 
@@ -1766,6 +1783,11 @@ type sessionExecCLIOptions struct {
 	Command   string
 }
 
+type sessionPTYCLIOptions struct {
+	SessionID string
+	Command   string
+}
+
 func parseSessionExecFlags(args []string) (sessionExecCLIOptions, error) {
 	opts := sessionExecCLIOptions{Timeout: 30 * time.Second}
 	positionals := make([]string, 0, 2)
@@ -1800,6 +1822,68 @@ func parseSessionExecFlags(args []string) (sessionExecCLIOptions, error) {
 	opts.SessionID = positionals[0]
 	opts.Command = positionals[1]
 	return opts, nil
+}
+
+func parseSessionPTYFlags(args []string) (sessionPTYCLIOptions, error) {
+	if len(args) != 2 {
+		return sessionPTYCLIOptions{}, errors.New("usage: air session pty <session_id> <command>")
+	}
+	if args[0] == "" {
+		return sessionPTYCLIOptions{}, errors.New("session id must not be empty")
+	}
+	if args[1] == "" {
+		return sessionPTYCLIOptions{}, errors.New("command must not be empty")
+	}
+	return sessionPTYCLIOptions{SessionID: args[0], Command: args[1]}, nil
+}
+
+func runSessionPTY(ctx context.Context, manager *session.Manager, sessionID, command string) error {
+	if !isInteractiveTerminal(os.Stdin) {
+		return errors.New("air session pty requires an interactive terminal")
+	}
+	rows, cols := terminalSize()
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("enable terminal raw mode: %w", err)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	return manager.AttachPTY(sessionID, vm.PTYOptions{
+		Command: command,
+		Stdin:   os.Stdin,
+		Stdout:  os.Stdout,
+		Rows:    rows,
+		Cols:    cols,
+	})
+}
+
+func runSessionPTYWithEnv(ctx context.Context, manager *session.Manager, sessionID, command string, env map[string]string) error {
+	if !isInteractiveTerminal(os.Stdin) {
+		return errors.New("air session pty requires an interactive terminal")
+	}
+	rows, cols := terminalSize()
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("enable terminal raw mode: %w", err)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	return manager.AttachPTY(sessionID, vm.PTYOptions{
+		Command: command,
+		Env:     env,
+		Stdin:   os.Stdin,
+		Stdout:  os.Stdout,
+		Rows:    rows,
+		Cols:    cols,
+	})
+}
+
+func terminalSize() (uint16, uint16) {
+	width, height, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width <= 0 || height <= 0 {
+		return 24, 80
+	}
+	return uint16(height), uint16(width)
 }
 
 func parseSessionCreateFlags(args []string) (sessionCreateCLIOptions, error) {
@@ -2460,6 +2544,156 @@ func runOpenClaudeOneCommand(ctx context.Context, manager *session.Manager, opts
 		ListenAddress: opts.ListenAddress,
 		CLIRepoPath:   opts.RepoPath,
 	})
+}
+
+func runOpenClaudePTYOneCommand(ctx context.Context, manager *session.Manager, opts openClaudeRunCLIOptions) error {
+	if opts.Provider != "" && opts.Provider != "firecracker" {
+		return fmt.Errorf("openclaude pty mode requires firecracker provider, got %s", opts.Provider)
+	}
+	memoryMiB := opts.MemoryMiB
+	if memoryMiB <= 0 {
+		memoryMiB = 1024
+	}
+	startedAt := time.Now()
+	s, err := manager.CreateWithOptions(session.CreateOptions{
+		Provider:      opts.Provider,
+		Network:       opts.Network,
+		MemoryMiB:     memoryMiB,
+		StorageMiB:    opts.StorageMiB,
+		WorkspacePath: opts.WorkspacePath,
+	})
+	if err != nil {
+		return fmt.Errorf("start pty session: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "air: firecracker session ready in %s\n", formatStepDuration(time.Since(startedAt)))
+	fmt.Fprintf(os.Stderr, "air: created session %s provider=%s\n", s.ID, s.Provider)
+	command := renderOpenClaudePTYCommand("/opt/openclaude")
+	fmt.Fprintf(os.Stderr, "air: attaching OpenClaude PTY on session %s\n", s.ID)
+	return runSessionPTYWithEnv(ctx, manager, s.ID, command, collectOpenClaudePTYEnv(os.Environ()))
+}
+
+func renderOpenClaudePTYCommand(repoPath string) string {
+	repo := shellArg(repoPath)
+	return strings.Join([]string{
+		"cd " + repo + " || exit 1;",
+		"if [ ! -f ./dist/cli.mjs ]; then",
+		"echo 'openclaude build not found: ./dist/cli.mjs missing in guest image' >&2;",
+		"exit 127;",
+		"fi;",
+		"if [ -x /usr/local/bin/bun ]; then exec /usr/local/bin/bun ./dist/cli.mjs; fi;",
+		"if [ -x /usr/bin/node ]; then exec /usr/bin/node ./dist/cli.mjs; fi;",
+		"echo 'openclaude runtime not found: need node or bun for ./dist/cli.mjs' >&2;",
+		"exit 127;",
+	}, " ")
+}
+
+func shellArg(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func collectOpenClaudePTYEnv(environ []string) map[string]string {
+	allowed := map[string]struct{}{
+		"CLAUDE_CODE_USE_OPENAI": {},
+		"CLAUDE_CODE_USE_GEMINI": {},
+		"OPENAI_API_KEY":         {},
+		"OPENAI_BASE_URL":        {},
+		"OPENAI_MODEL":           {},
+		"DEEPSEEK_API_KEY":       {},
+		"DEEPSEEK_BASE_URL":      {},
+		"DEEPSEEK_MODEL":         {},
+		"GEMINI_API_KEY":         {},
+		"GOOGLE_API_KEY":         {},
+		"GEMINI_BASE_URL":        {},
+		"GEMINI_MODEL":           {},
+		"GEMINI_AUTH_MODE":       {},
+		"ANTHROPIC_AUTH_TOKEN":   {},
+		"ANTHROPIC_API_KEY":      {},
+		"ANTHROPIC_BASE_URL":     {},
+		"ANTHROPIC_MODEL":        {},
+		"HTTP_PROXY":             {},
+		"HTTPS_PROXY":            {},
+		"ALL_PROXY":              {},
+		"NO_PROXY":               {},
+		"PATH":                   {},
+		"TERM":                   {},
+		"COLORTERM":              {},
+		"LANG":                   {},
+		"LC_ALL":                 {},
+		"HOME":                   {},
+		"SHELL":                  {},
+	}
+	out := make(map[string]string)
+	for _, item := range environ {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || value == "" {
+			continue
+		}
+		if _, allow := allowed[key]; allow {
+			out[key] = value
+		}
+	}
+	applyOpenClaudePTYProfileFallback(out)
+	applyOpenClaudePTYRuntimeFallbacks(out)
+	return out
+}
+
+func applyOpenClaudePTYProfileFallback(env map[string]string) {
+	if hasOpenAIEnv(env) || hasAnthropicEnv(env) {
+		return
+	}
+	profile, err := loadChatProfile()
+	if err != nil || profile == nil {
+		return
+	}
+	switch profile.ProviderMode {
+	case "anthropic":
+		if profile.AnthropicBaseURL != "" {
+			env["ANTHROPIC_BASE_URL"] = profile.AnthropicBaseURL
+		}
+		if profile.AnthropicModel != "" {
+			env["ANTHROPIC_MODEL"] = profile.AnthropicModel
+		}
+		if profile.AnthropicAuthToken != "" {
+			env["ANTHROPIC_AUTH_TOKEN"] = profile.AnthropicAuthToken
+			env["ANTHROPIC_API_KEY"] = profile.AnthropicAuthToken
+		}
+	default:
+		if profile.OpenAIBaseURL != "" {
+			env["OPENAI_BASE_URL"] = profile.OpenAIBaseURL
+		}
+		if profile.OpenAIModel != "" {
+			env["OPENAI_MODEL"] = profile.OpenAIModel
+		}
+		if profile.OpenAIAPIKey != "" {
+			env["OPENAI_API_KEY"] = profile.OpenAIAPIKey
+		}
+		env["CLAUDE_CODE_USE_OPENAI"] = "1"
+	}
+}
+
+func applyOpenClaudePTYRuntimeFallbacks(env map[string]string) {
+	env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	env["HOME"] = "/root"
+	env["SHELL"] = "/bin/sh"
+	if env["TERM"] == "" {
+		env["TERM"] = "xterm-256color"
+	}
+	if env["LANG"] == "" && env["LC_ALL"] == "" {
+		env["LANG"] = "C.UTF-8"
+	}
+}
+
+func hasOpenAIEnv(env map[string]string) bool {
+	return env["OPENAI_API_KEY"] != "" && env["OPENAI_BASE_URL"] != "" && env["OPENAI_MODEL"] != ""
+}
+
+func hasAnthropicEnv(env map[string]string) bool {
+	return (env["ANTHROPIC_AUTH_TOKEN"] != "" || env["ANTHROPIC_API_KEY"] != "") &&
+		env["ANTHROPIC_BASE_URL"] != "" &&
+		env["ANTHROPIC_MODEL"] != ""
 }
 
 func writeOpenClaudeChatScript(repoPath string) (string, error) {

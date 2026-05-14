@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -41,6 +42,19 @@ type ExecChunk struct {
 
 type StreamingRuntime interface {
 	ExecStreaming(sessionID, command string, timeout time.Duration, onChunk func(ExecChunk)) (*ExecResult, error)
+}
+
+type PTYRuntime interface {
+	AttachPTY(sessionID string, opts PTYOptions) error
+}
+
+type PTYOptions struct {
+	Command string
+	Env     map[string]string
+	Stdin   io.Reader
+	Stdout  io.Writer
+	Rows    uint16
+	Cols    uint16
 }
 
 type InspectInfo struct {

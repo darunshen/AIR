@@ -267,6 +267,12 @@ This file is the English companion of the working TODO and should track the same
   - this is still a visible experience break
   - this should be split into a privileged network helper plus ordinary session control
 
+- AIR needs a sudo-free user-mode network path
+  - this will likely use a gVisor-netstack-like user-space TCP/IP implementation, exposed as `--network user` or an equivalent mode
+  - the goal is to run Firecracker/OpenClaude as a normal user without creating TAP devices, changing `iptables`, or writing `/proc/sys/net/ipv4/ip_forward`
+  - a host-side unprivileged process should carry guest egress traffic, with HTTP(S) / CONNECT egress as the first target for OpenClaude
+  - `--network full` should remain available for cases that need complete TCP/IP behavior and can provide elevated network privileges
+
 ## Priority Rule
 
 - The priority rule is: prove the real AI-agent workflow first, then continue deeper infrastructure work

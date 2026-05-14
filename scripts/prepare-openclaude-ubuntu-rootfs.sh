@@ -36,6 +36,7 @@ GUEST_HOST_BINARIES=(
   /usr/bin/bash
   /usr/bin/curl
   /usr/bin/git
+  /usr/bin/node
   /usr/bin/rg
 )
 GUEST_HOST_PATHS=(
@@ -84,6 +85,40 @@ is_glibc_bun() {
   readelf -l "${bun_path}" 2>/dev/null | grep -q "/ld-linux-"
 }
 
+resolve_build_bun() {
+  if command -v bun >/dev/null 2>&1; then
+    command -v bun
+    return 0
+  fi
+  if [[ -n "${BUN_BIN:-}" && -x "${BUN_BIN}" ]]; then
+    printf '%s\n' "${BUN_BIN}"
+    return 0
+  fi
+  echo "bun is required on the host to build OpenClaude dist/cli.mjs" >&2
+  exit 1
+}
+
+prepare_openclaude_tree() {
+  local source_repo="$1"
+  local output_dir="$2"
+  local build_bun="$3"
+
+  echo "Preparing OpenClaude runtime tree..."
+  cp -a "${source_repo}" "${output_dir}"
+  rm -rf "${output_dir}/.git" "${output_dir}/.air"
+  find "${output_dir}" -name '.DS_Store' -delete
+
+  (
+    cd "${output_dir}"
+    "${build_bun}" run build
+  )
+
+  if [[ ! -f "${output_dir}/dist/cli.mjs" ]]; then
+    echo "openclaude build did not produce dist/cli.mjs: ${output_dir}" >&2
+    exit 1
+  fi
+}
+
 require_cmd cp
 require_cmd dpkg-deb
 require_cmd debugfs
@@ -94,6 +129,7 @@ require_cmd mkdir
 require_cmd mkfs.ext4
 require_cmd mktemp
 require_cmd readelf
+require_cmd readlink
 require_cmd rm
 require_cmd truncate
 require_cmd unzip
@@ -104,6 +140,7 @@ copy_path_into_rootfs() {
   local dest_root="$1"
   local path
   local rel
+  local resolved
 
   path="$2"
   if [[ ! -e "${path}" && ! -L "${path}" ]]; then
@@ -115,6 +152,13 @@ copy_path_into_rootfs() {
   (
     cd / && cp -a --parents "${rel}" "${dest_root}"
   )
+
+  if [[ -L "${path}" ]]; then
+    resolved="$(readlink -f "${path}")"
+    if [[ -n "${resolved}" && "${resolved}" != "${path}" ]]; then
+      copy_path_into_rootfs "${dest_root}" "${resolved}"
+    fi
+  fi
 }
 
 copy_binary_and_runtime_libs() {
@@ -215,6 +259,10 @@ if [[ -z "${BUN_BIN}" || ! -x "${BUN_BIN}" ]]; then
   exit 1
 fi
 
+BUILD_BUN="$(resolve_build_bun)"
+PREPARED_OPENCLAUDE="${tmpdir}/openclaude"
+prepare_openclaude_tree "${OPENCLAUDE_REPO}" "${PREPARED_OPENCLAUDE}" "${BUILD_BUN}"
+
 stage_root="${tmpdir}/rootfs"
 mkdir -p "${stage_root}"
 
@@ -232,6 +280,12 @@ set -eu
 mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+if [ ! -e /dev/ptmx ]; then
+  ln -s pts/ptmx /dev/ptmx 2>/dev/null || true
+fi
+chmod 666 /dev/ptmx /dev/pts/ptmx 2>/dev/null || true
 mount -t tmpfs tmpfs /run 2>/dev/null || true
 mount -t tmpfs tmpfs /tmp 2>/dev/null || true
 mkdir -p /var/log /mnt/workspace-ro /mnt/workspace-rw /workspace
@@ -282,7 +336,7 @@ inject_guest_host_tooling "${stage_root}"
 
 echo "Injecting AIR guest agent and OpenClaude runtime..."
 mkdir -p "${stage_root}/opt" "${stage_root}/usr/local/bin" "${stage_root}/var/log" "${stage_root}/run" "${stage_root}/mnt/workspace-ro" "${stage_root}/mnt/workspace-rw" "${stage_root}/workspace"
-cp -a "${OPENCLAUDE_REPO}" "${stage_root}/opt/openclaude"
+cp -a "${PREPARED_OPENCLAUDE}" "${stage_root}/opt/openclaude"
 rm -rf "${stage_root}/opt/openclaude/.git" "${stage_root}/opt/openclaude/.air"
 find "${stage_root}/opt/openclaude" -name '.DS_Store' -delete
 
