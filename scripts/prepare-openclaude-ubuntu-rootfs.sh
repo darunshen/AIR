@@ -32,12 +32,12 @@ BUN_BIN="${4:-}"
 DEFAULT_PORT=10789
 DEFAULT_PROXY_LISTEN="127.0.0.1:18080"
 DEFAULT_PROXY_VSOCK_PORT=18080
-GUEST_HOST_BINARIES=(
-  /usr/bin/bash
-  /usr/bin/curl
-  /usr/bin/git
-  /usr/bin/node
-  /usr/bin/rg
+GUEST_HOST_COMMANDS=(
+  bash
+  curl
+  git
+  node
+  rg
 )
 GUEST_HOST_PATHS=(
   /etc/bash.bashrc
@@ -178,13 +178,40 @@ copy_binary_and_runtime_libs() {
   )
 }
 
+copy_host_command_into_rootfs() {
+  local dest_root="$1"
+  local command_name="$2"
+  local source_path
+  local rel
+
+  source_path="$(command -v "${command_name}" || true)"
+  if [[ -z "${source_path}" ]]; then
+    echo "required host command not found in PATH: ${command_name}" >&2
+    return 1
+  fi
+  source_path="$(readlink -f "${source_path}")"
+  if [[ ! -x "${source_path}" ]]; then
+    echo "required host command is not executable: ${source_path}" >&2
+    return 1
+  fi
+
+  copy_binary_and_runtime_libs "${dest_root}" "${source_path}"
+
+  rel="${source_path#/}"
+  mkdir -p "${dest_root}/usr/bin"
+  if [[ "${source_path}" != "/usr/bin/${command_name}" ]]; then
+    ln -sf "/${rel}" "${dest_root}/usr/bin/${command_name}"
+  fi
+}
+
 inject_guest_host_tooling() {
   local dest_root="$1"
+  local command_name
   local path
 
   echo "Injecting guest host tooling..."
-  for path in "${GUEST_HOST_BINARIES[@]}"; do
-    copy_binary_and_runtime_libs "${dest_root}" "${path}"
+  for command_name in "${GUEST_HOST_COMMANDS[@]}"; do
+    copy_host_command_into_rootfs "${dest_root}" "${command_name}"
   done
   for path in "${GUEST_HOST_PATHS[@]}"; do
     copy_path_into_rootfs "${dest_root}" "${path}"
@@ -381,7 +408,7 @@ Prepared Ubuntu-based Firecracker rootfs with OpenClaude:
   Guest Bun binary: /usr/local/bin/bun
   Guest launcher: /usr/local/bin/openclaude-grpc
   Guest air-agent: /usr/bin/air-agent
-  Guest extra tooling: ${GUEST_HOST_BINARIES[*]}
+  Guest extra tooling: ${GUEST_HOST_COMMANDS[*]}
 
 Recommended environment:
   export AIR_FIRECRACKER_ROOTFS=${OUTPUT_ROOTFS}
