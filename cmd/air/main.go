@@ -1140,12 +1140,6 @@ func ensureOpenClaudeGuestRootfsInteractive() error {
 		return nil
 	}
 
-	if resolved := vm.ResolveFirecrackerAsset("openclaude-alpine-rootfs.ext4"); resolved != "" {
-		_ = os.Setenv("AIR_FIRECRACKER_ROOTFS", resolved)
-		ensureOpenClaudeGuestBootArgs(resolved)
-		return nil
-	}
-
 	installDir := resolvedInitDir("")
 	fmt.Fprintf(os.Stdout, "OpenClaude guest rootfs 未找到，默认安装位置：%s\n", installDir)
 	ok, err := promptConfirm(fmt.Sprintf("下载 AIR 官方 OpenClaude Firecracker guest 镜像到 %s", installDir))
@@ -1171,7 +1165,7 @@ func ensureOpenClaudeGuestBootArgs(rootfsPath string) {
 		return
 	}
 	switch filepath.Base(rootfsPath) {
-	case "openclaude-ubuntu-rootfs.ext4", "openclaude-alpine-rootfs.ext4", "ubuntu-rootfs-air.ext4", "ubuntu-rootfs.ext4":
+	case "openclaude-ubuntu-rootfs.ext4", "ubuntu-rootfs-air.ext4", "ubuntu-rootfs.ext4":
 	default:
 		return
 	}

@@ -197,6 +197,7 @@ func extractTarGz(reader io.Reader, outputDir string) error {
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 				return err
 			}
+			_ = os.Remove(targetPath)
 			if err := os.Link(linkTarget, targetPath); err != nil {
 				return err
 			}

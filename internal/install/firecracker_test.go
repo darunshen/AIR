@@ -129,6 +129,62 @@ func TestExtractTarGzSupportsHardLinks(t *testing.T) {
 	}
 }
 
+func TestExtractTarGzReplacesExistingHardLinks(t *testing.T) {
+	t.Helper()
+
+	var archive bytes.Buffer
+	gzw := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gzw)
+
+	fileHeader := &tar.Header{
+		Name: "openclaude/package.json",
+		Mode: 0o644,
+		Size: int64(len("{}\n")),
+	}
+	if err := tw.WriteHeader(fileHeader); err != nil {
+		t.Fatalf("write file header: %v", err)
+	}
+	if _, err := tw.Write([]byte("{}\n")); err != nil {
+		t.Fatalf("write file body: %v", err)
+	}
+
+	linkHeader := &tar.Header{
+		Name:     "openclaude/node_modules/pkg/package.json",
+		Typeflag: tar.TypeLink,
+		Linkname: "openclaude/package.json",
+	}
+	if err := tw.WriteHeader(linkHeader); err != nil {
+		t.Fatalf("write hardlink header: %v", err)
+	}
+
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+
+	outputDir := t.TempDir()
+	existingPath := filepath.Join(outputDir, "openclaude", "node_modules", "pkg", "package.json")
+	if err := os.MkdirAll(filepath.Dir(existingPath), 0o755); err != nil {
+		t.Fatalf("create existing dir: %v", err)
+	}
+	if err := os.WriteFile(existingPath, []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write existing hardlink target: %v", err)
+	}
+
+	if err := extractTarGz(bytes.NewReader(archive.Bytes()), outputDir); err != nil {
+		t.Fatalf("extract tar.gz with existing hardlink target: %v", err)
+	}
+	body, err := os.ReadFile(existingPath)
+	if err != nil {
+		t.Fatalf("read replaced hardlink target: %v", err)
+	}
+	if string(body) != "{}\n" {
+		t.Fatalf("unexpected replaced hardlink body: %q", string(body))
+	}
+}
+
 func TestExtractTarGzSupportsSymlinks(t *testing.T) {
 	t.Helper()
 

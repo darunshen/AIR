@@ -758,6 +758,16 @@ func TestEnsureOpenClaudeGuestBootArgsIgnoresOtherRootfs(t *testing.T) {
 	}
 }
 
+func TestEnsureOpenClaudeGuestBootArgsIgnoresLegacyAlpineRootfs(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("AIR_FIRECRACKER_BOOT_ARGS", "")
+	ensureOpenClaudeGuestBootArgs("/tmp/assets/firecracker/openclaude-alpine-rootfs.ext4")
+	if got := os.Getenv("AIR_FIRECRACKER_BOOT_ARGS"); got != "" {
+		t.Fatalf("unexpected boot args for legacy alpine rootfs: %q", got)
+	}
+}
+
 func TestApplyChatProfileEnvOpenAI(t *testing.T) {
 	t.Helper()
 
